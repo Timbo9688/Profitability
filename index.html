@@ -1196,8 +1196,23 @@ function labelsV(){
       const days=daysAged(o.date);
       const severity=days>=90?'#f87171':days>=60?'#fb923c':'#fbbf24';
       const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
+      const rn=o.returnedNums||[];
       const showEmail=showEmailFor.has(o.id);
       const emailLines=buildEmailLines(o);
+
+      // Build per-number track rows
+      const trackRows=tNums.length
+        ? tNums.map(t=>{
+            const ret=rn.includes(t);
+            return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
+              <input type="checkbox" ${ret?'checked':''} data-oid="${o.id}" data-trk="${t}" onchange="handleTrackChk(this)" style="accent-color:var(--green);width:13px;height:13px;cursor:pointer;flex-shrink:0">
+              <span style="font-family:monospace;font-size:11px;color:var(--text2);flex:1">${e(t)}</span>
+              <span style="font-size:10px;font-weight:600;color:${ret?'var(--green)':'var(--amber)'};white-space:nowrap;min-width:54px;text-align:right">${ret?'✓ returned':'pending'}</span>
+              <button data-t="${t}" onclick="event.stopPropagation();openUPS([this.dataset.t])" style="font-size:10px;color:var(--blue);background:transparent;border:1px solid rgba(59,130,246,.35);border-radius:3px;padding:2px 7px;cursor:pointer;white-space:nowrap;flex-shrink:0">Track ↗</button>
+            </div>`;
+          }).join('')
+        : '<span style="font-size:11px;color:var(--text3)">No tracking numbers — add via edit order</span>';
+
       html+=`<div style="border-bottom:1px solid var(--border);background:rgba(204,0,0,.04)">
         <div style="display:flex;align-items:center;padding:8px 14px;gap:8px">
           <span style="flex:0 0 60px;font-size:12px;color:var(--text2)">${o.date}</span>
@@ -1210,9 +1225,12 @@ function labelsV(){
           <span style="flex:0 0 auto;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
             <button class="btn-grn" style="font-size:10px;padding:3px 8px" onclick="markUsed('${o.id}')">✓ returned</button>
             <button class="btn-s" style="font-size:10px;padding:3px 8px;${showEmail?'color:var(--green);border-color:var(--green)':''}" onclick="toggleEmail('${o.id}')">${showEmail?'hide':'✉ remind'}</button>
-            ${days>=90?`<button class="btn-d" style="font-size:10px;padding:3px 8px" onclick="writeOffCore('${o.id}')" title="Core not returned 90+ days — void warranty">⚠ void warranty</button>`:''}
+            ${days>=90?`<button class="btn-d" style="font-size:10px;padding:3px 8px" onclick="writeOffCore('${o.id}')" title="Core not returned 90+ days — void warranty">⚠ void</button>`:''}
             <button class="btn-s" style="font-size:10px;padding:3px 8px" onclick="editOrd('${o.id}')">edit</button>
           </span>
+        </div>
+        <div style="padding:4px 14px 8px 32px;background:rgba(0,0,0,.1)">
+          ${trackRows}
         </div>
         ${showEmail?`<div style="padding:0 14px 12px 14px">
           ${o.customerEmail?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:7px 10px;background:var(--bg3);border-radius:6px;border:1px solid var(--border2)">
