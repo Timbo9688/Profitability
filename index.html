@@ -373,7 +373,7 @@ function saveAll(){
 function savePeriods(){try{localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}catch(e){}}
 function saveCx()     {try{localStorage.setItem('hpdc-cx',     JSON.stringify(customExpenses));}catch(e){}}
 function saveFields() {try{localStorage.setItem('hpdc-fields', JSON.stringify(fieldConfig));}catch(e){}}
-function saveSyncConf(){try{localStorage.setItem('hpdc-sync',  JSON.stringify({enabled:syncConfig.enabled,binId:syncConfig.binId}));}catch(e){}}
+function saveSyncConf(){try{localStorage.setItem('hpdc-sync', JSON.stringify({enabled:syncConfig.enabled,binId:syncConfig.binId,apiKey:syncConfig.apiKey}));}catch(e){}}
 function stamp(){const el=document.getElementById('last-saved');if(el)el.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
 
 // ── Cloud sync ─────────────────────────────────────────────────────────────────
@@ -850,7 +850,7 @@ function settV(){
   const syncHtml=`<div class="sync-box">
     <div style="font-size:13px;font-weight:500;margin-bottom:10px">JSONBin.io cloud sync</div>
     <div class="info-box" style="margin-bottom:12px">Create a free account at <a href="https://jsonbin.io" target="_blank">jsonbin.io</a> → copy your API key → paste it below → click "Create new bin". Share the Bin ID with your team. Data syncs on every save and every 90 seconds.</div>
-    <div style="margin-bottom:10px"><div style="font-size:12px;color:var(--text2);margin-bottom:4px">API key (never sent to cloud)</div><input type="password" class="sync-inp" value="${syncConfig.apiKey}" placeholder="$2b$10$..." oninput="syncConfig.apiKey=this.value"></div>
+    <div style="margin-bottom:10px"><div style="font-size:12px;color:var(--text2);margin-bottom:4px">API key</div><input type="password" class="sync-inp" value="${syncConfig.apiKey}" placeholder="$2b$10$..." oninput="syncConfig.apiKey=this.value;saveSyncConf();"></div>
     <div style="margin-bottom:10px"><div style="font-size:12px;color:var(--text2);margin-bottom:4px">Bin ID</div><input type="text" class="sync-inp" value="${syncConfig.binId}" placeholder="paste from jsonbin.io" oninput="syncConfig.binId=this.value;syncConfig.enabled=!!this.value;saveSyncConf();"></div>
     <div class="fc" style="gap:8px;flex-wrap:wrap">
       <button class="btn-p" style="font-size:13px;padding:8px 16px" onclick="createBin()">Create new bin</button>
