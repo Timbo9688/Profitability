@@ -1095,9 +1095,18 @@ function labelsV(){
   const rAmt=allReturned.reduce((s,o)=>s+n(o.returnCost),0);
   const coreValueAtRisk=allPending.reduce((s,o)=>s+n(o.coreValue),0);
 
-  // ── Summary stats ──────────────────────────────────────────────────────────
-  const total=wl.length;
-  const retRate=total>0?Math.round(allReturned.length/total*100):0;
+  // ── Count individual cores (each tracking number = 1 core, or 1 if no tracking nums) ──
+  function coreCount(orderList){return orderList.reduce((s,o)=>{const t=(o.trackingNumbers||[]).filter(x=>x.trim()).length;return s+(t>0?t:1);},0);}
+  function coreValueSum(orderList){return orderList.reduce((s,o)=>s+n(o.coreValue),0);}
+  function returnedCoreCount(orderList){return orderList.reduce((s,o)=>{const tNums=(o.trackingNumbers||[]).filter(x=>x.trim());const rn=o.returnedNums||[];if(tNums.length>0)return s+rn.filter(r=>tNums.includes(r)).length;return s+(o.returnUsed?1:0);},0);}
+
+  const totalCores=coreCount(wl);
+  const inWindowCores=coreCount(inWindow);
+  const overdueCores=coreCount(overdue);
+  const returnedCores=coreCount(allReturned);
+  const returnedValue=coreValueSum(allReturned);
+  const retRate=totalCores>0?Math.round(returnedCores/totalCores*100):0;
+
   // Average days to return for completed returns
   const returnTimes=allReturned.filter(o=>o.date).map(o=>daysAged(o.date));
   const avgDays=returnTimes.length?Math.round(returnTimes.reduce((s,d)=>s+d,0)/returnTimes.length):null;
@@ -1109,22 +1118,23 @@ function labelsV(){
   const summaryBar=`<div style="display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:12px">
     <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
       <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Total cores</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh)">${total}</div>
+      <div style="font-size:20px;font-weight:800;font-family:var(--fh)">${totalCores}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:1px">${wl.length} order${wl.length!==1?'s':''}</div>
     </div>
     <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
       <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">In window</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:var(--green)">${inWindow.length}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">within ${coreReturnDays}d</div>
+      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:var(--green)">${inWindowCores}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:1px">within ${coreReturnDays}d · ${inWindow.length} order${inWindow.length!==1?'s':''}</div>
     </div>
     <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
       <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Overdue</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:#f87171">${overdue.length}</div>
-      <div style="font-size:10px;color:var(--amber);margin-top:1px;font-weight:600">${coreValueAtRisk>0?$$(coreValueAtRisk,2)+' at risk':''}</div>
+      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:#f87171">${overdueCores}</div>
+      <div style="font-size:10px;color:var(--amber);margin-top:1px;font-weight:600">${coreValueAtRisk>0?$$(coreValueAtRisk,2)+' at risk':overdue.length+' order'+(overdue.length!==1?'s':'')}</div>
     </div>
     <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
       <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Returned</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:var(--green)">${allReturned.length}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">${$$(rAmt,2)} recovered</div>
+      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:var(--green)">${returnedCores}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:1px">${returnedValue>0?$$(returnedValue,2)+' value recovered':allReturned.length+' order'+(allReturned.length!==1?'s':'')}</div>
     </div>
     <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
       <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Return rate</div>
