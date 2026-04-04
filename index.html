@@ -1153,6 +1153,7 @@ function labelsV(){
       ${filterBtn('Overdue','overdue',overdue.length,true)}
       ${filterBtn('Returned','returned',allReturned.length)}
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        ${(()=>{const allPendingNums=allPending.reduce((s,o)=>{const rn=o.returnedNums||[];return s+(o.trackingNumbers||[]).filter(t=>t.trim()&&!rn.includes(t)).length;},0);return allPendingNums>0?`<button class="btn-g" style="font-size:11px;padding:5px 12px;white-space:nowrap" onclick="checkAllTracking(true)">↗ Track all ${allPendingNums} pending</button>`:''})()}
         <input type="text" id="core-search-inp" class="inp-base" value="${e(coreSearch)}" placeholder="Search order #, description, tracking #…" style="min-width:200px;padding:6px 10px;font-size:12px" onkeydown="if(event.key==='Enter')runCoreSearch()">
         <button class="btn-p" style="padding:6px 14px;font-size:12px" onclick="runCoreSearch()">Search</button>
         ${isFiltered?`<button class="btn-s" onclick="clearCoreSearch()">✕</button>`:''}
@@ -1253,19 +1254,27 @@ function labelsV(){
   if(!viewInWindow.length&&!viewReturned.length&&!viewVoided.length&&!aging.length)html+=`<div style="padding:30px;text-align:center;color:var(--text3)">No orders match your current filter.</div>`;
   return html;
 }
-function checkAllTracking(){
-  // Gather all tracking numbers from pending labels (arrays), flatten
+function checkAllTracking(pendingOnly=true){
+  // Collect all untracked tracking numbers from pending cores
+  const source=pendingOnly
+    ? orders.filter(o=>o.returnSent&&!isOrderReturned(o)&&!o.warrantyVoided)
+    : orders.filter(o=>o.returnSent);
   const allNums=[];
-  orders.filter(o=>o.returnSent&&!o.returnUsed).forEach(o=>{
-    const nums=(o.trackingNumbers||[]).filter(t=>t.trim());
-    nums.forEach(t=>allNums.push(t.trim()));
+  source.forEach(o=>{
+    const rn=o.returnedNums||[];
+    (o.trackingNumbers||[]).filter(t=>t.trim()).forEach(t=>{
+      if(!pendingOnly||!rn.includes(t))allNums.push(t.trim());
+    });
   });
-  if(!allNums.length){alert('No tracking numbers added to pending labels yet.');return;}
-  // UPS accepts up to 25 at once, newline-separated
-  for(let i=0;i<allNums.length;i+=25){
-    const chunk=allNums.slice(i,i+25);
-    window.open(upsUrl(chunk),'_blank');
+  if(!allNums.length){
+    alert(pendingOnly?'No pending tracking numbers found. All cores may already be marked returned.':'No tracking numbers found.');
+    return;
   }
+  // Open one tab per number — UPS bulk URL doesn't work reliably
+  if(allNums.length>10){
+    if(!confirm('This will open '+allNums.length+' UPS tracking tabs — one per tracking number. Continue?'))return;
+  }
+  allNums.forEach(t=>window.open('https://www.ups.com/track?tracknum='+encodeURIComponent(t),'_blank'));
 }
 // setTracking replaced by trackingNumbers array
 function lcard(o,isUsed){
