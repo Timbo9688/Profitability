@@ -272,6 +272,9 @@ tbody td{padding:7px 8px;}
 .tag{display:inline-block;font-size:10px;padding:2px 7px;border-radius:4px;font-weight:500;background:var(--bg3);color:var(--text2);text-transform:uppercase;letter-spacing:.3px;}
 .fc-row{display:flex;align-items:center;gap:8px;}
 @media(max-width:600px){.ord-vc,.ord-gp{flex:0 0 72px;}.content{padding:10px 12px;}.day-head{padding:8px 12px;}.ord-row{padding:6px 12px;}}
+
+
+
 </style>
 </head>
 <body>
@@ -300,6 +303,7 @@ tbody td{padding:7px 8px;}
       </div>
       <div class="topbar-right">
         <button class="undo-btn" onclick="uploadBg()" style="font-size:11px">⬛ BG</button>
+        <button class="undo-btn" onclick="openDoom()" style="font-size:11px;color:#f97316;border-color:#f97316" title="Play Doom">🔫 DOOM</button>
         <button class="undo-btn" id="undo-btn" onclick="undo()" disabled>↩ Undo</button>
         <span style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:4px">
           <span class="sync-dot sync-idle" id="sync-dot"></span>
@@ -324,6 +328,7 @@ tbody td{padding:7px 8px;}
     </nav>
   </div>
   <div class="content" id="view"></div>
+
 </div>
 <script>
 
@@ -1673,12 +1678,7 @@ function uploadBg(){
   inp.onchange=e=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=ev=>{
-      localStorage.setItem('hpdc-bg',ev.target.result);
-      applyBg();
-      // Re-render settings to update button state
-      if(view==='settings')render();
-    };
+    reader.onload=ev=>{localStorage.setItem('hpdc-bg',ev.target.result);applyBg();if(view==='settings')render();};
     reader.readAsDataURL(file);
   };inp.click();
 }
@@ -1687,6 +1687,246 @@ loadData();
 applyBg();
 if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId){syncFromCloud().then(c=>{if(c)render();startAutoPoll();});}
 else{render();}
+
+// ── DOOM ─────────────────────────────────────────────────────────────────────
+function openDoom(){
+  // GitHub Pages CSP blocks iframes/blobs — open in new tab directly
+  window.open('https://silentspacemarine.com/','_blank');
+}
+// ── DAILY LEDGER ──────────────────────────────────────────────────────────────// ── DAILY LEDGER ──────────────────────────────────────────────────────────────
+function dailyV(){
+  const dated=byDate();
+  if(!dated.length)return`<div class="empty"><h3>Nothing logged yet</h3><p>Add your first shipped order to start tracking.</p><button class="btn-p" onclick="sv('entry')">Add first entry</button></div>`;
+  const t=totals();
+  let alerts='';
+  const totalPending=orders.reduce((s,o)=>s+pendingLabelCount(o),0);
+  if(totalPending>0)alerts+=`<div class="alert alert-warn">⚑ ${totalPending} return label${totalPending>1?'s':''} pending — up to ${$$(t.pending,2)} exposure. <button class="btn-s" style="margin-left:8px" onclick="sv('labels')">Core Returns →</button></div>`;
+  const lowMarginOrders=orders.filter(o=>gpPct(o)<alertThreshold&&n(o.revenue)>0);
+  const unreviewedLow=lowMarginOrders.filter(o=>!reviewedOrders.has(o.id));
+  if(unreviewedLow.length)alerts+=`<div class="alert alert-red" id="low-margin-alert" onclick="toggleLowMarginFilter()" style="cursor:pointer;user-select:none">⚠ ${unreviewedLow.length} order${unreviewedLow.length>1?'s':''} below ${alertThreshold}% margin — ${lowMarginFilter?'<strong>showing flagged only — click to show all</strong>':'<strong>click to show only flagged orders</strong>'}. Click <strong>review ✓</strong> on each to clear.</div>`;
+
+  // Apply search + date filter to orders
+  const q=ledgerSearch.trim().toLowerCase();
+  const dfrom=ledgerDateFrom?pd(ledgerDateFrom):null;
+  const dto=ledgerDateTo?pd(ledgerDateTo):null;
+
+  // Filter orders
+  const filteredOrders=orders.filter(o=>{
+    if(lowMarginFilter&&!(gpPct(o)<alertThreshold&&n(o.revenue)>0))return false;
+    if(q&&!(o.orderNum.toLowerCase().includes(q)||o.description.toLowerCase().includes(q)||o.notes.toLowerCase().includes(q)))return false;
+    const od=pd(o.date);
+    if(dfrom&&od<dfrom)return false;
+    if(dto&&od>dto)return false;
+    return true;
+  });
+
+  const isFiltered=q||dfrom||dto||lowMarginFilter;
+  const matchCount=filteredOrders.length;
+
+  // Group filtered orders by date
+  const filteredMap={};
+  filteredOrders.forEach(o=>{if(!filteredMap[o.date])filteredMap[o.date]=[];filteredMap[o.date].push(o);});
+  const filteredDated=Object.entries(filteredMap).sort(([a],[b])=>pd(a)-pd(b));
+
+  const toolbar=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:12px 14px;margin-bottom:14px;">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <input type="text" id="ledger-search-inp" class="inp-base" value="${e(ledgerSearch)}" placeholder="Search orders — type then press Enter (lmm, chr 3.6, order #…)" style="flex:1;min-width:200px;padding:8px 12px;font-size:13px" onkeydown="if(event.key==='Enter')runLedgerSearch()">
+      <button class="btn-p" style="padding:8px 16px;font-size:12px" onclick="runLedgerSearch()">Search</button>
+      ${isFiltered?`<button class="btn-s" onclick="clearLedgerSearch()">✕ Clear</button>`:''}
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;flex-shrink:0">Date range:</span>
+      <input type="text" id="ledger-from" class="inp-base" value="${e(ledgerDateFrom)}" placeholder="From M/D/YYYY" style="width:130px;padding:6px 10px;font-size:13px" onkeydown="if(event.key==='Enter')runLedgerSearch()">
+      <span style="font-size:12px;color:var(--text3)">—</span>
+      <input type="text" id="ledger-to" class="inp-base" value="${e(ledgerDateTo)}" placeholder="To M/D/YYYY" style="width:130px;padding:6px 10px;font-size:13px" onkeydown="if(event.key==='Enter')runLedgerSearch()">
+      <input class="ledger-jump inp-base" type="text" id="jump-inp" placeholder="Jump to date (M/D)" style="width:140px;padding:6px 10px;font-size:13px" onkeydown="if(event.key==='Enter')jumpToDate()">
+      <button class="btn-g" style="padding:6px 12px;font-size:12px" onclick="jumpToDate()">Jump</button>
+      <span style="font-size:12px;color:var(--text3);margin-left:auto">${isFiltered?`${matchCount} order${matchCount!==1?'s':''} matched`:orders.length+' orders total'}</span>
+      <button class="btn-p" style="padding:6px 14px;font-size:12px" onclick="sv('entry')">+ New entry</button>
+    </div>
+  </div>`;
+
+  if(isFiltered&&!filteredDated.length)
+    return alerts+toolbar+`<div class="empty"><h3>No orders matched</h3><p>Try different search terms or a wider date range.</p></div>`;
+
+  let rnet=0;
+  const allDated=byDate();
+  // Running net must include ALL days, not just filtered — calculate full running net first
+  const fullRnet={};
+  let r=0;
+  allDated.forEach(([date,dayOrders])=>{
+    const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
+    r+=dRev-dVc-getDayBurn(date)-getDayExpTotal(date);
+    fullRnet[date]=r;
+  });
+
+  const dayData=(isFiltered?filteredDated:allDated).map(([date,dayOrders])=>{
+    const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
+    const dBurn=getDayBurn(date),dExpT=getDayExpTotal(date),dNet=dRev-dVc-dBurn-dExpT;
+    return{date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet:fullRnet[date]||0,isFiltered};
+  });
+
+  // Auto-expand most recent day if nothing is expanded yet
+  const sortedDates=dayData.map(d=>d.date);
+  if(expandedDays.size===0&&sortedDates.length){
+    expandedDays.add(sortedDates[sortedDates.length-1]); // most recent
+  }
+  return alerts+toolbar+[...dayData].reverse().map(buildDaySection).join('');
+}
+
+function toggleDay(date){
+  if(expandedDays.has(date))expandedDays.delete(date);
+  else expandedDays.add(date);
+  document.getElementById('view').innerHTML=dailyV();
+  updateSummary();updateBadge();updateUndoBtn();
+}
+function toggleLowMarginFilter(){
+  lowMarginFilter=!lowMarginFilter;
+  // Clear other filters when activating this one
+  if(lowMarginFilter){ledgerSearch='';ledgerDateFrom='';ledgerDateTo='';}
+  document.getElementById('view').innerHTML=dailyV();
+  updateSummary();updateBadge();updateUndoBtn();
+}
+function runLedgerSearch(){
+
+  ledgerSearch=document.getElementById('ledger-search-inp')?.value||'';
+  ledgerDateFrom=document.getElementById('ledger-from')?.value||'';
+  ledgerDateTo=document.getElementById('ledger-to')?.value||'';
+  document.getElementById('view').innerHTML=dailyV();
+  updateSummary();updateBadge();updateUndoBtn();
+}
+function clearLedgerSearch(){
+  ledgerSearch='';ledgerDateFrom='';ledgerDateTo='';lowMarginFilter=false;
+  document.getElementById('view').innerHTML=dailyV();
+  updateSummary();updateBadge();updateUndoBtn();
+}
+
+function jumpToDate(){
+  const val=(document.getElementById('jump-inp')?.value||'').trim();if(!val)return;
+  const el=document.getElementById('day-'+sid(val));
+  if(el){el.scrollIntoView({behavior:'smooth',block:'start'});el.classList.add('highlighted');setTimeout(()=>el.classList.remove('highlighted'),2500);}
+}
+
+function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
+  const s=sid(date),hasOv=hasAnyOv(date);
+  const isOpen=expandedDays.has(date);
+  const ordRows=dayOrders.map(o=>{
+    const lowM=gpPct(o)<alertThreshold&&n(o.revenue)>0;
+    const oid=o.id;
+
+        const reviewBtn=lowM?'<button class="btn-s" style="font-size:10px;padding:2px 7px;'+(reviewedOrders.has(oid)?'color:var(--green);border-color:var(--green)':'color:var(--amber);border-color:var(--amber)')+'" onclick="markReviewed(\''+oid+'\')">'+( reviewedOrders.has(oid)?'✓ rev':'review')+'</button>':'';
+    const expanded=expandedOrds.has(oid);
+    // Build detail panel
+    let detail='';
+    if(expanded){
+      const activeF=fieldConfig.filter(x=>x.active);
+      const costRows=activeF.map(fc=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px"><span style="color:var(--text3)">${e(fc.label)}</span><span style="font-weight:500">${$$(n(o[fc.id]||0),2)}</span></div>`).join('');
+      const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
+      detail='<div style="padding:10px 16px 12px 24px;background:rgba(0,0,0,.2);border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:12px 24px">'
+        // Cost breakdown
+        +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Cost breakdown</div>'
+        +costRows
+        +(o.returnUsed?'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px"><span style="color:var(--text3)">Return shipping</span><span style="font-weight:500">'+$$(n(o.returnCost),2)+'</span></div>':'')
+        +'<div style="display:flex;justify-content:space-between;padding:4px 0;margin-top:2px;border-top:1px solid var(--border2);font-size:12px;font-weight:700"><span>Total variable</span><span class="cr">'+$$(vc(o),2)+'</span></div>'
+        +'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px;font-weight:700"><span>Gross profit</span><span class="'+cc(gp(o))+'">'+$$(gp(o),2)+' ('+gpPct(o).toFixed(1)+'%)</span></div>'
+        +'</div>'
+        // Order details
+        +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order details</div>'
+        +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
+        +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:4px;color:var(--amber);font-weight:600">⚠ Core value at risk: '+$$(n(o.coreValue),2)+'</div>':'')
+        +(o.returnSent?'<div style="font-size:12px;margin-bottom:4px;color:'+(isOrderReturned(o)?'var(--green)':'var(--amber)')+'">'+( isOrderReturned(o)?'✓ Core returned':'⚑ Core return pending')+'</div>':'')
+        +(tNums.length?'<div style="font-size:10px;color:var(--text3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;font-weight:600">Tracking</div>'+tNums.map(t=>'<div style="font-family:monospace;font-size:11px;color:var(--text2);margin-bottom:2px">'+e(t)+'</div>').join(''):'')
+        +(o.notes?'<div style="font-size:12px;color:var(--text3);margin-top:4px;font-style:italic">'+e(o.notes)+'</div>':'')
+        +'</div>'
+        +'</div>';
+    }
+    return '<div class="ord-row'+(lowM?' low-margin':'') +'" style="cursor:pointer" onclick="toggleOrdExpand(\''+oid+'\')">'+
+      '<span class="ord-num">#'+e(o.orderNum)+'</span>'
+      +'<span class="ord-desc">'+e(o.description)+'</span>'
+      +'<span class="ord-rev">'+$$(n(o.revenue),2)+'</span>'
+      +'<span class="ord-vc cr">−'+$$(vc(o),2)+'</span>'
+      +'<span class="ord-gp '+cc(gp(o))+'">'+$$(gp(o),2)+' <span style="font-size:10px;opacity:.7">'+gpPct(o).toFixed(0)+'%</span></span>'
+      +'<span class="ord-act" style="flex:0 0 auto;display:flex;gap:3px;justify-content:flex-end">'
+      +reviewBtn
+      +'<button class="btn-s" onclick="event.stopPropagation();editOrd(\''+oid+'\')">edit</button>'
+      +'<button class="btn-d" onclick="event.stopPropagation();delOrd(\''+oid+'\')">×</button>'
+      +'</span>'
+      +'</div>'
+      +detail;
+  }).join('');
+
+
+  const dayExps=getDayExpenses(date);
+  let expSection='';
+  if(dayExps.length||addingExpDate===date){
+    const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
+    const addForm=addingExpDate===date?`<div class="exp-add-row">
+      <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
+      <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
+      <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
+      <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
+      <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
+    </div>`:`<div style="padding:6px 16px"><button class="btn-s" onclick="event.stopPropagation();openAddExp('${date}')">+ one-time expense</button></div>`;
+    expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
+  }
+  const period=getPeriod(date);
+  const coreInputs=period.items.map(item=>`<div class="fc-field">
+    <span class="fc-field-lbl" title="${item.name}">${e(item.name)}</span>
+    <input type="number" id="fc-${s}-${item.key}" class="fc-inp${isItemOv(date,item.key)?' ov':''}" value="${getDayItemRate(date,item.key).toFixed(2)}" oninput="setDayItemRate('${date}','${item.key}',this.value)">
+  </div>`).join('');
+  const activeCx=getActiveCx(date);
+  const cxInputs=activeCx.length?'<div class="fc-divider"></div>'+activeCx.map(cx=>`<div class="fc-field"><span class="fc-field-lbl" title="${cx.name}">${e(cx.name)}</span><input type="number" id="fc-${s}-cx_${cx.id}" class="fc-inp${isCxOv(date,cx.id)?' ov':''}" value="${getCxRate(date,cx.id).toFixed(2)}" oninput="setCxRate('${date}','${cx.id}',this.value)"></div>`).join(''):'';
+  const expNudge=(!dayExps.length&&addingExpDate!==date)?`<button class="btn-s" style="font-size:10px" onclick="event.stopPropagation();openAddExp('${date}')">+ expense</button>`:'';
+  const ordHdr=`<div class="ord-hdr"><span class="ord-num">Order #</span><span style="flex:1">Description</span><span class="ord-rev" style="text-align:right">Revenue</span><span class="ord-vc" style="text-align:right">Var costs</span><span class="ord-gp" style="text-align:right">Gross / margin</span><span class="ord-act" style="min-width:80px"></span></div>`;
+  return`<div class="day-section${isOpen?' highlighted':''}" id="day-${s}">
+    <div class="day-head" onclick="toggleDay('${date}')" style="cursor:pointer;user-select:none">
+      <span class="day-date-lbl">${date}</span>
+      <div class="day-kpis">
+        <div class="kpi"><span class="kpi-lbl">Revenue in</span><span class="kpi-val cg">${$$(dRev,2)}</span></div>
+        <div class="kpi"><span class="kpi-lbl">Total out</span><span class="kpi-val cr" id="dout-${s}">−${$$(dVc+dBurn+dExpT,2)}</span></div>
+        <div class="kpi"><span class="kpi-lbl">Net today</span><span class="pill ${dNet>=0?'pill-pos':'pill-neg'}" id="dnet-${s}">${dNet>=0?'+':''} ${$$(dNet,2)}</span></div>
+        <div class="kpi"><span class="kpi-lbl">Running</span><span class="kpi-val ${cc(rnet)}" id="drun-${s}">${$$(rnet,2)}</span></div>
+      </div>
+      <div class="fc-row" style="gap:6px;margin-left:auto">
+        <span style="font-size:18px;color:var(--text3);line-height:1">${isOpen?'▾':'▸'}</span>
+      </div>
+    </div>
+    ${isOpen?`
+    <div class="day-orders">${ordHdr}${ordRows}</div>
+    ${expSection}
+    <div class="day-fc">
+      <span class="fc-section-lbl">Fixed</span>
+      <div class="fc-fields">${coreInputs}${cxInputs}</div>
+      <div class="fc-right">
+        <div><span class="fc-total-lbl">Total</span><span class="fc-total-val" id="dburn-${s}">${$$(dBurn,2)}</span></div>
+        <button class="fc-reset" id="dres-${s}" style="display:${hasOv?'':' none'}" onclick="event.stopPropagation();resetDay('${date}')">↺ reset</button>
+      </div>
+    </div>`:''}
+  </div>`;
+}
+function addForDate(d){entryDatePreset=d;sv('entry');}
+
+// ── SUMMARY VIEW ──────────────────────────────────────────────────────────────
+function summaryV(){
+  if(!orders.length)return`<div class="empty"><h3>No data yet</h3></div>`;
+  const ranges=dateRanges();
+  // break even
+  const b=getDayBurn(todayShort());
+  const avgVC=orders.length?orders.reduce((s,o)=>s+vc(o),0)/orders.length:0;
+  const avgRev=orders.length?orders.reduce((s,o)=>s+n(o.revenue),0)/orders.length:0;
+  const avgGP=avgRev-avgVC;
+  const ordersNeeded=avgGP>0?Math.ceil(b/avgGP):'∞';
+  const revNeeded=avgGP>0?b/(avgGP/avgRev)*100:0;
+  const beHtml=`<div class="breakeven-box">
+    <div class="be-title">Break-even today (based on averages)</div>
+    <div class="be-grid">
+      <div class="be-metric"><div class="be-lbl">Daily burn</div><div class="be-val co">${$$(b,2)}</div></div>
+      <div class="be-metric"><div class="be-lbl">Orders needed</div><div class="be-val cp">${ordersNeeded}</div></div>
+      <div class="be-metric"><div class="be-lbl">Revenue needed</div><div class="be-val cg">${revNeeded>0?$$(b/(avgGP/avgRev)):'—'}</div></div>
+    </div>
+  </div>`;
+  return beHtml+`<div class="sum-cards">${['today','week','month','year'].map(k=>{const r=ranges[k];return buildSumCard(r,ordersInRange(r.start,r.end),expensesInRange(r.start,r.end));}).join('')}</div>`;
+}
 
 </script>
 </body>
