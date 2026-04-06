@@ -377,7 +377,7 @@ function todayShort(){const d=new Date();return`${d.getMonth()+1}/${d.getDate()}
 function sid(d){return d.replace(/\//g,'_');}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function fresh(){
-  const o={date:'',orderNum:'',description:'',revenue:'',returnSent:false,returnUsed:false,returnCost:'',coreValue:'',trackingNumbers:[],returnedNums:[],reminderLog:[],customerEmail:'',warrantyVoided:false,notes:''};
+  const o={date:'',orderNum:'',customerName:'',description:'',revenue:'',returnSent:false,returnUsed:false,returnCost:'',coreValue:'',trackingNumbers:[],returnedNums:[],reminderLog:[],customerEmail:'',warrantyVoided:false,notes:''};
   fieldConfig.forEach(fc=>{if(!(fc.id in o))o[fc.id]='';});
   return o;
 }
@@ -457,6 +457,8 @@ function loadData(){
     if(!ord.returnedNums)ord.returnedNums=[];
     if(ord.warrantyVoided===undefined)ord.warrantyVoided=false;
     if(ord.coreValue===undefined)ord.coreValue='';
+    ord.date=normDate(ord.date)||ord.date; // normalize date format
+    if(!ord.customerName)ord.customerName='';
     if(!ord.reminderLog)ord.reminderLog=[];
     // migrate: if returnUsed=true and has tracking numbers, mark all as returned
     if(ord.returnUsed&&ord.trackingNumbers.length>0&&ord.returnedNums.length===0)ord.returnedNums=[...ord.trackingNumbers];
@@ -547,6 +549,7 @@ function importData(){const i=document.createElement('input');i.type='file';i.ac
 
 // ── DATE HELPERS ──────────────────────────────────────────────────────────────
 function pd(s){if(!s)return new Date(2000,0,1);const p=s.split('/').map(Number);return p.length===3?new Date(p[2],p[0]-1,p[1]):new Date(new Date().getFullYear(),p[0]-1,p[1]);}
+function normDate(s){if(!s)return s;const d=pd(s.trim());if(isNaN(d))return s.trim();return(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();}
 function dateRanges(){
   const n=new Date(),y=n.getFullYear(),mo=n.getMonth(),da=n.getDate(),dow=n.getDay();
   const wkS=new Date(y,mo,da-(dow===0?6:dow-1));const wkE=new Date(wkS);wkE.setDate(wkS.getDate()+6);
@@ -900,7 +903,8 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
         +'</div>'
         // Order details
         +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order details</div>'
-        +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
+        +(o.customerName?'<div style="font-size:12px;margin-bottom:4px;font-weight:600">👤 '+e(o.customerName)+'</div>':'')
+    +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
         +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:4px;color:var(--amber);font-weight:600">⚠ Core value at risk: '+$$(n(o.coreValue),2)+'</div>':'')
         +(o.returnSent?'<div style="font-size:12px;margin-bottom:4px;color:'+(isOrderReturned(o)?'var(--green)':'var(--amber)')+'">'+( isOrderReturned(o)?'✓ Core returned':'⚑ Core return pending')+'</div>':'')
         +(tNums.length?'<div style="font-size:10px;color:var(--text3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;font-weight:600">Tracking</div>'+tNums.map(t=>'<div style="font-family:monospace;font-size:11px;color:var(--text2);margin-bottom:2px">'+e(t)+'</div>').join(''):'')
@@ -910,7 +914,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
     }
     return '<div class="ord-row'+(lowM?' low-margin':'') +'" style="cursor:pointer" onclick="toggleOrdExpand(\''+oid+'\')">'+
       '<span class="ord-num">#'+e(o.orderNum)+'</span>'
-      +'<span class="ord-desc">'+e(o.description)+'</span>'
+      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+'</span>'
       +'<span class="ord-rev">'+$$(n(o.revenue),2)+'</span>'
       +'<span class="ord-vc cr">−'+$$(vc(o),2)+'</span>'
       +'<span class="ord-gp '+cc(gp(o))+'">'+$$(gp(o),2)+' <span style="font-size:10px;opacity:.7">'+gpPct(o).toFixed(0)+'%</span></span>'
@@ -959,6 +963,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
       </div>
     </div>
     ${isOpen?`
+    <div style="padding:6px 14px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px"><button class="btn-p" style="font-size:12px;padding:5px 14px" onclick="event.stopPropagation();addForDate('${date}')">+ New order</button><span style="font-size:11px;color:var(--text3)">Date pre-fills as ${date} — change it in the form if needed</span></div>
     <div class="day-orders">${ordHdr}${ordRows}</div>
     ${expSection}
     <div class="day-fc">
@@ -1059,7 +1064,8 @@ function entryV(){
     <p class="s-sub">${editId?'All existing values are pre-filled below — change what you need and save.':'Fill in what shipped today.'}</p>
     ${prev}
     <div class="frow">${fg('date','Date shipped',f.date,'text')}${fg('orderNum','Order #',f.orderNum,'text')}</div>
-    <div class="frow">${fg('revenue','Revenue ($)',f.revenue,'number')}${fg('description','Description',f.description,'text')}</div>
+    <div class="frow">${fg('customerName','Customer name',f.customerName||'','text')}${fg('description','Description',f.description,'text')}</div>
+    <div class="frow">${fg('revenue','Revenue ($)',f.revenue,'number')}<div></div></div>
     ${fieldRows}
     <div class="frow">
       ${fg('coreValue','Core value ($) — at risk if not returned',f.coreValue||'','number')}
@@ -1773,6 +1779,7 @@ function deleteVersion(ts){
 function clearAllData(){pushUndo();orders=[];dailyExpenses=[];dailyOverrides={};saveAll();render();}
 function submitEntry(){
   if(!f.revenue){return;}
+  f.date=normDate(f.date)||f.date; // ensure consistent M/D/YYYY format
   pushUndo();
   const isNew=!editId;
   if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId}:o);editId=null;}
@@ -1964,7 +1971,8 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
         +'</div>'
         // Order details
         +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order details</div>'
-        +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
+        +(o.customerName?'<div style="font-size:12px;margin-bottom:4px;font-weight:600">👤 '+e(o.customerName)+'</div>':'')
+    +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
         +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:4px;color:var(--amber);font-weight:600">⚠ Core value at risk: '+$$(n(o.coreValue),2)+'</div>':'')
         +(o.returnSent?'<div style="font-size:12px;margin-bottom:4px;color:'+(isOrderReturned(o)?'var(--green)':'var(--amber)')+'">'+( isOrderReturned(o)?'✓ Core returned':'⚑ Core return pending')+'</div>':'')
         +(tNums.length?'<div style="font-size:10px;color:var(--text3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;font-weight:600">Tracking</div>'+tNums.map(t=>'<div style="font-family:monospace;font-size:11px;color:var(--text2);margin-bottom:2px">'+e(t)+'</div>').join(''):'')
@@ -1974,7 +1982,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
     }
     return '<div class="ord-row'+(lowM?' low-margin':'') +'" style="cursor:pointer" onclick="toggleOrdExpand(\''+oid+'\')">'+
       '<span class="ord-num">#'+e(o.orderNum)+'</span>'
-      +'<span class="ord-desc">'+e(o.description)+'</span>'
+      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+'</span>'
       +'<span class="ord-rev">'+$$(n(o.revenue),2)+'</span>'
       +'<span class="ord-vc cr">−'+$$(vc(o),2)+'</span>'
       +'<span class="ord-gp '+cc(gp(o))+'">'+$$(gp(o),2)+' <span style="font-size:10px;opacity:.7">'+gpPct(o).toFixed(0)+'%</span></span>'
@@ -2023,6 +2031,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
       </div>
     </div>
     ${isOpen?`
+    <div style="padding:6px 14px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px"><button class="btn-p" style="font-size:12px;padding:5px 14px" onclick="event.stopPropagation();addForDate('${date}')">+ New order</button><span style="font-size:11px;color:var(--text3)">Date pre-fills as ${date} — change it in the form if needed</span></div>
     <div class="day-orders">${ordHdr}${ordRows}</div>
     ${expSection}
     <div class="day-fc">
