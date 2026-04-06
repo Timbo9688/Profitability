@@ -305,6 +305,7 @@ tbody td{padding:7px 8px;}
         <button class="undo-btn" onclick="uploadBg()" style="font-size:11px">⬛ BG</button>
         <button class="undo-btn" onclick="openDoom()" style="font-size:11px;color:#f97316;border-color:#f97316" title="Play Doom">🔫 DOOM</button>
         <button class="undo-btn" id="undo-btn" onclick="undo()" disabled>↩ Undo</button>
+        <button class="undo-btn" id="redo-btn" onclick="redo()" disabled>Redo ↪</button>
         <span style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:4px">
           <span class="sync-dot sync-idle" id="sync-dot"></span>
           <span id="sync-status">local</span>
@@ -356,7 +357,8 @@ if(sessionStorage.getItem('hpdc-unlocked')){
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let orders=[], fcPeriods=[], customExpenses=[], dailyOverrides={};
 let dailyExpenses=[], fieldConfig=[], syncConfig={enabled:false,apiKey:'',binId:''};
-let undoStack=[], alertThreshold=30;
+let undoStack=[], redoStack=[], alertThreshold=30;
+let entriesSinceBackup=parseInt(localStorage.getItem('hpdc-esb')||'0');
 let view='daily', editId=null, f=fresh(), newPeriodDraft=null, newCxDraft=null;
 let entryDatePreset=null, addingExpDate=null;
 
@@ -386,6 +388,7 @@ function upsUrl(nums){return 'https://www.ups.com/track?tracknum='+nums.filter(t
 function openUPS(nums){window.open(upsUrl(nums),'_blank');}
 // ── UNDO ─────────────────────────────────────────────────────────────────────
 function pushUndo(){
+  redoStack=[];
   undoStack.push({
     orders:JSON.parse(JSON.stringify(orders)),
     fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
@@ -399,6 +402,16 @@ function pushUndo(){
 }
 function undo(){
   if(!undoStack.length)return;
+  // Save current state to redo stack
+  redoStack.push({
+    orders:JSON.parse(JSON.stringify(orders)),
+    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
+    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
+    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
+    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
+    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
+  });
+  if(redoStack.length>20)redoStack.shift();
   const p=undoStack.pop();
   orders=p.orders;fcPeriods=p.fcPeriods;customExpenses=p.customExpenses;
   dailyOverrides=p.dailyOverrides;dailyExpenses=p.dailyExpenses;fieldConfig=p.fieldConfig;
@@ -408,6 +421,25 @@ function undo(){
 function updateUndoBtn(){
   const btn=document.getElementById('undo-btn');
   if(btn){btn.disabled=undoStack.length===0;btn.title=undoStack.length?`Undo (${undoStack.length} step${undoStack.length>1?'s':''} available)`:'Nothing to undo';}
+  const rbtn=document.getElementById('redo-btn');
+  if(rbtn){rbtn.disabled=redoStack.length===0;rbtn.title=redoStack.length?`Redo (${redoStack.length} step${redoStack.length>1?'s':''} available)`:'Nothing to redo';}
+}
+function redo(){
+  if(!redoStack.length)return;
+  // Save current state to undoStack before redoing
+  undoStack.push({
+    orders:JSON.parse(JSON.stringify(orders)),
+    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
+    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
+    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
+    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
+    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
+  });
+  const next=redoStack.pop();
+  orders=next.orders;fcPeriods=next.fcPeriods;customExpenses=next.customExpenses;
+  dailyOverrides=next.dailyOverrides;dailyExpenses=next.dailyExpenses;fieldConfig=next.fieldConfig;
+  saveAll();savePeriods();saveCx();saveFields();
+  updateUndoBtn();render();
 }
 
 // ── STORAGE ───────────────────────────────────────────────────────────────────
@@ -893,18 +925,17 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
 
 
   const dayExps=getDayExpenses(date);
-  let expSection='';
-  if(dayExps.length||addingExpDate===date){
-    const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
-    const addForm=addingExpDate===date?`<div class="exp-add-row">
-      <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
-      <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
-      <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
-      <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
-      <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
-    </div>`:`<div style="padding:6px 16px"><button class="btn-s" onclick="event.stopPropagation();openAddExp('${date}')">+ one-time expense</button></div>`;
-    expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
-  }
+
+  const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
+  const addForm=addingExpDate===date?`<div class="exp-add-row">
+    <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
+    <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
+    <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
+    <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
+    <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
+  </div>`:`<div style="padding:8px 16px"><button class="btn-g" style="font-size:12px;padding:6px 14px" onclick="event.stopPropagation();openAddExp('${date}')">+ Add expense</button></div>`;
+  const expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
+
   const period=getPeriod(date);
   const coreInputs=period.items.map(item=>`<div class="fc-field">
     <span class="fc-field-lbl" title="${item.name}">${e(item.name)}</span>
@@ -1025,7 +1056,7 @@ function entryV(){
   for(let i=0;i<active.length;i+=2){const a=active[i],b=active[i+1];fieldRows+=`<div class="frow">${fg(a.id,a.label+' ($)',f[a.id]||'')}${b?fg(b.id,b.label+' ($)',f[b.id]||''): '<div></div>'}</div>`;}
   return`<div class="form-wrap">
     <h2 class="s-title">${editId?'Edit entry':'New shipment entry'}</h2>
-    <p class="s-sub">${editId?'Update the details below.':'Fill in what shipped today.'}</p>
+    <p class="s-sub">${editId?'All existing values are pre-filled below — change what you need and save.':'Fill in what shipped today.'}</p>
     ${prev}
     <div class="frow">${fg('date','Date shipped',f.date,'text')}${fg('orderNum','Order #',f.orderNum,'text')}</div>
     <div class="frow">${fg('revenue','Revenue ($)',f.revenue,'number')}${fg('description','Description',f.description,'text')}</div>
@@ -1035,14 +1066,14 @@ function entryV(){
       ${fg('customerEmail','Customer email (optional)',f.customerEmail||'','email')}
     </div>
     ${retSec()}
-    <div class="fg" style="margin-top:12px"><label>Notes</label><input type="text" id="f-notes" value="${e(f.notes||'')}placeholder="Any notes…" oninput="fi('notes',this.value)"></div>
+    <div class="fg" style="margin-top:12px"><label>Notes</label><input type="text" id="f-notes" value="${e(f.notes||'')}" placeholder="Any notes…" oninput="fi('notes',this.value)"></div>
     <div style="margin-top:18px;display:flex;gap:10px">
       <button class="btn-p" onclick="submitEntry()">${editId?'Save changes':'Add entry'}</button>
       <button class="btn-g" onclick="cancelEntry()">Cancel</button>
     </div>
   </div>`;
 }
-function fg(id,lbl,val,type='number'){return`<div class="fg"><label>${lbl}</label><input type="${type}" id="f-${id}" value="${e(val||'')} " placeholder="0" oninput="fi('${id}',this.value)"></div>`;}
+function fg(id,lbl,val,type='number'){const v=val===0?'0':(val||'');return`<div class="fg"><label>${lbl}</label><input type="${type}" id="f-${id}" value="${e(v)}" placeholder="${type==='number'?'0':'—'}" oninput="fi('${id}',this.value)"></div>`;}
 function retSec(){
   const tNums=f.trackingNumbers||[];
   const trackInputs=tNums.map((t,i)=>`
@@ -1560,6 +1591,26 @@ function settV(){
         ${localStorage.getItem('hpdc-bg')?`<button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="removeBg()">Remove background</button><span style="font-size:12px;color:var(--green)">✓ Background active</span>`:'<span style="font-size:12px;color:var(--text3)">No background set</span>'}
       </div>
     </div>
+    <div class="ss"><div class="ss-title">Version history</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.6">Save a snapshot of your current data at any time. Keep up to 10 versions. Restore any version instantly — your current state is saved to Undo first so you can always go back.</p>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn-p" onclick="saveVersion()">💾 Save version now</button>
+        <span style="font-size:12px;color:var(--text3)">Auto-backup every 5 entries · <span style="color:var(--text2);font-weight:600">${5-entriesSinceBackup} until next backup</span></span>
+      </div>
+      ${(()=>{
+        let versions=[];
+        try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
+        if(!versions.length)return'<p style="font-size:13px;color:var(--text3)">No saved versions yet. Click Save version now to create your first snapshot.</p>';
+        return versions.map(v=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:6px;flex-wrap:wrap">
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${v._label}${v._auto?'':' <span style="font-size:9px;background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.2);border-radius:3px;padding:1px 5px;font-weight:600;vertical-align:middle">MANUAL</span>'}</div>
+            <div style="font-size:11px;color:var(--text3)">${v.orders?v.orders.length:0} orders · ${v.fcPeriods?v.fcPeriods.length:0} rate periods</div>
+          </div>
+          <button class="btn-g" style="font-size:12px;padding:5px 12px" onclick="restoreVersion(${v._ts})">↩ Restore</button>
+          <button class="btn-d" style="font-size:12px;padding:5px 10px" onclick="deleteVersion(${v._ts})">×</button>
+        </div>`).join('');
+      })()}
+    </div>
     <div class="ss"><div class="ss-title">Export / import</div>
       <div class="fc-row" style="gap:8px;flex-wrap:wrap">
         <button class="btn-g" onclick="exportData()">Export JSON backup</button>
@@ -1652,8 +1703,89 @@ function clearCoreSearch(){
 }
 function saveEmailTemplate(v){emailTemplate=v;localStorage.setItem('hpdc-etpl',v);}
 function resetEmailTemplate(){emailTemplate="Please drop the core off at any UPS location at your earliest convenience.\n\nThank you for your business!\nHeavy Duty Parts Company";localStorage.setItem('hpdc-etpl',emailTemplate);const el=document.getElementById('email-tpl-inp');if(el)el.value=emailTemplate;}
+function autoSaveVersion(){
+  // Silent version save — no alert, used for automatic backups
+  const snap={
+    _ts:Date.now(),
+    _label:'Auto-backup — '+new Date().toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}),
+    _auto:true,
+    orders:JSON.parse(JSON.stringify(orders)),
+    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
+    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
+    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
+    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
+    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
+  };
+  let versions=[];
+  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
+  // Remove oldest auto-backups if over limit, always keep manual saves
+  const autos=versions.filter(v=>v._auto);
+  const manuals=versions.filter(v=>!v._auto);
+  // Keep last 8 auto + all manuals (up to 10 total)
+  const trimmedAutos=autos.slice(0,7); // we're adding one more, so keep 7
+  versions=[snap,...trimmedAutos,...manuals].slice(0,10);
+  localStorage.setItem('hpdc-versions',JSON.stringify(versions));
+  entriesSinceBackup=0;
+  localStorage.setItem('hpdc-esb','0');
+}
+function saveVersion(){
+  const snap={
+    _ts:Date.now(),
+    _label:new Date().toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}),
+    orders:JSON.parse(JSON.stringify(orders)),
+    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
+    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
+    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
+    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
+    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
+  };
+  let versions=[];
+  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
+  versions.unshift(snap);
+  if(versions.length>10)versions=versions.slice(0,10); // keep 10 versions
+  localStorage.setItem('hpdc-versions',JSON.stringify(versions));
+  if(view==='settings')render();
+  alert('Version saved: '+snap._label);
+}
+function restoreVersion(ts){
+  let versions=[];
+  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
+  const snap=versions.find(v=>v._ts===ts);
+  if(!snap)return;
+  pushUndo();
+  orders=snap.orders;
+  if(snap.fcPeriods)fcPeriods=snap.fcPeriods;
+  if(snap.customExpenses)customExpenses=snap.customExpenses;
+  if(snap.dailyOverrides)dailyOverrides=snap.dailyOverrides;
+  if(snap.dailyExpenses)dailyExpenses=snap.dailyExpenses;
+  if(snap.fieldConfig)fieldConfig=mergeFields(snap.fieldConfig);
+  saveAll();savePeriods();saveCx();saveFields();
+  render();
+  alert('Restored to version: '+snap._label+'. Use Undo to go back if needed.');
+}
+function deleteVersion(ts){
+  let versions=[];
+  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
+  versions=versions.filter(v=>v._ts!==ts);
+  localStorage.setItem('hpdc-versions',JSON.stringify(versions));
+  if(view==='settings')render();
+}
 function clearAllData(){pushUndo();orders=[];dailyExpenses=[];dailyOverrides={};saveAll();render();}
-function submitEntry(){if(!f.revenue){return;}pushUndo();if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId}:o);editId=null;}else orders.push({...f,id:uid()});saveAll();f=fresh();sv('daily');}
+function submitEntry(){
+  if(!f.revenue){return;}
+  pushUndo();
+  const isNew=!editId;
+  if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId}:o);editId=null;}
+  else orders.push({...f,id:uid()});
+  saveAll();
+  // Auto-backup every 5 new entries
+  if(isNew){
+    entriesSinceBackup++;
+    localStorage.setItem('hpdc-esb',entriesSinceBackup);
+    if(entriesSinceBackup>=5)autoSaveVersion();
+  }
+  f=fresh();sv('daily');
+}
 function cancelEntry(){editId=null;f=fresh();sv('daily');}
 function editOrd(id){const o=orders.find(x=>x.id===id);if(o){f={...o};editId=id;sv('entry');}}
 function delOrd(id){pushUndo();orders=orders.filter(o=>o.id!==id);saveAll();render();}
@@ -1857,18 +1989,17 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
 
 
   const dayExps=getDayExpenses(date);
-  let expSection='';
-  if(dayExps.length||addingExpDate===date){
-    const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
-    const addForm=addingExpDate===date?`<div class="exp-add-row">
-      <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
-      <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
-      <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
-      <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
-      <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
-    </div>`:`<div style="padding:6px 16px"><button class="btn-s" onclick="event.stopPropagation();openAddExp('${date}')">+ one-time expense</button></div>`;
-    expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
-  }
+
+  const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
+  const addForm=addingExpDate===date?`<div class="exp-add-row">
+    <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
+    <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
+    <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
+    <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
+    <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
+  </div>`:`<div style="padding:8px 16px"><button class="btn-g" style="font-size:12px;padding:6px 14px" onclick="event.stopPropagation();openAddExp('${date}')">+ Add expense</button></div>`;
+  const expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
+
   const period=getPeriod(date);
   const coreInputs=period.items.map(item=>`<div class="fc-field">
     <span class="fc-field-lbl" title="${item.name}">${e(item.name)}</span>
