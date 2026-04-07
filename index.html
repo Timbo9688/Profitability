@@ -618,7 +618,20 @@ function byDate(){const m={};orders.forEach(o=>{if(!m[o.date])m[o.date]=[];m[o.d
 function totals(){
   const rev=orders.reduce((s,o)=>s+n(o.revenue),0),vc_=orders.reduce((s,o)=>s+vc(o),0);
   const dated=byDate();
-  const fixed=dated.reduce((s,[d])=>s+getDayBurn(d),0)+customExpenses.filter(x=>x.freq==='onetime').reduce((s,x)=>s+n(x.amount),0);
+  // Fixed costs must cover EVERY calendar day from first entry to last entry (not just days with orders)
+  let fixed=customExpenses.filter(x=>x.freq==='onetime').reduce((s,x)=>s+n(x.amount),0);
+  if(dated.length){
+    const firstD=pd(dated[0][0]);
+    const lastEntryD=pd(dated[dated.length-1][0]);
+    const todayD=new Date();todayD.setHours(23,59,59);
+    const lastD=lastEntryD>todayD?lastEntryD:todayD;
+    const cur=new Date(firstD);cur.setHours(0,0,0,0);
+    while(cur<=lastD){
+      const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
+      fixed+=getDayBurn(dstr);
+      cur.setDate(cur.getDate()+1);
+    }
+  }
   const expTotal=dailyExpenses.reduce((s,x)=>s+n(x.amount),0);
   const pending=orders.filter(o=>o.returnSent&&!isOrderReturned(o)).reduce((s,o)=>s+n(o.returnCost),0);
   return{rev,vc_,fixed,expTotal,net:rev-vc_-fixed-expTotal,pending};
@@ -830,14 +843,34 @@ function dailyV(){
 
   let rnet=0;
   const allDated=byDate();
-  // Running net must include ALL days, not just filtered — calculate full running net first
+  // Running net must include ALL calendar days (including gap days with no orders)
   const fullRnet={};
   let r=0;
-  allDated.forEach(([date,dayOrders])=>{
-    const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
-    r+=dRev-dVc-getDayBurn(date)-getDayExpTotal(date);
-    fullRnet[date]=r;
-  });
+  if(allDated.length){
+    // Build a map of days that have orders
+    const ordMap={};
+    allDated.forEach(([date,dayOrders])=>{ordMap[date]=dayOrders;});
+    // Iterate every calendar day from first entry to today
+    const firstDate=pd(allDated[0][0]);
+    // Loop through to the LATER of today or the last entry date (handles future-dated entries)
+    const lastEntryDate=pd(allDated[allDated.length-1][0]);
+    const today=new Date();today.setHours(23,59,59);
+    const lastDate=lastEntryDate>today?lastEntryDate:today;
+    const cur=new Date(firstDate);
+    cur.setHours(0,0,0,0);
+    while(cur<=lastDate){
+      const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
+      const dayOrds=ordMap[dstr]||[];
+      const dRev=dayOrds.reduce((s,o)=>s+n(o.revenue),0);
+      const dVc=dayOrds.reduce((s,o)=>s+vc(o),0);
+      r+=dRev-dVc-getDayBurn(dstr)-getDayExpTotal(dstr);
+      // Store for days that have entries (so the day blocks show correct running total)
+      if(ordMap[dstr])fullRnet[dstr]=r;
+      cur.setDate(cur.getDate()+1);
+    }
+    // Also fill in the current running total for the display
+    // For the most recent entry day, make sure it reflects all gap days after it
+  }
 
   const dayData=(isFiltered?filteredDated:allDated).map(([date,dayOrders])=>{
     const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
@@ -2232,14 +2265,34 @@ function dailyV(){
 
   let rnet=0;
   const allDated=byDate();
-  // Running net must include ALL days, not just filtered — calculate full running net first
+  // Running net must include ALL calendar days (including gap days with no orders)
   const fullRnet={};
   let r=0;
-  allDated.forEach(([date,dayOrders])=>{
-    const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
-    r+=dRev-dVc-getDayBurn(date)-getDayExpTotal(date);
-    fullRnet[date]=r;
-  });
+  if(allDated.length){
+    // Build a map of days that have orders
+    const ordMap={};
+    allDated.forEach(([date,dayOrders])=>{ordMap[date]=dayOrders;});
+    // Iterate every calendar day from first entry to today
+    const firstDate=pd(allDated[0][0]);
+    // Loop through to the LATER of today or the last entry date (handles future-dated entries)
+    const lastEntryDate=pd(allDated[allDated.length-1][0]);
+    const today=new Date();today.setHours(23,59,59);
+    const lastDate=lastEntryDate>today?lastEntryDate:today;
+    const cur=new Date(firstDate);
+    cur.setHours(0,0,0,0);
+    while(cur<=lastDate){
+      const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
+      const dayOrds=ordMap[dstr]||[];
+      const dRev=dayOrds.reduce((s,o)=>s+n(o.revenue),0);
+      const dVc=dayOrds.reduce((s,o)=>s+vc(o),0);
+      r+=dRev-dVc-getDayBurn(dstr)-getDayExpTotal(dstr);
+      // Store for days that have entries (so the day blocks show correct running total)
+      if(ordMap[dstr])fullRnet[dstr]=r;
+      cur.setDate(cur.getDate()+1);
+    }
+    // Also fill in the current running total for the display
+    // For the most recent entry day, make sure it reflects all gap days after it
+  }
 
   const dayData=(isFiltered?filteredDated:allDated).map(([date,dayOrders])=>{
     const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
