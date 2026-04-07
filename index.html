@@ -508,7 +508,7 @@ function stamp(){const el=document.getElementById('last-saved');if(el)el.textCon
 
 // ── CLOUD SYNC ────────────────────────────────────────────────────────────────
 function setSyncStatus(s,msg){const dot=document.getElementById('sync-dot'),txt=document.getElementById('sync-status');if(dot)dot.className='sync-dot sync-'+s;if(txt)txt.textContent=msg||s;}
-function getPayload(){return{orders,fcPeriods,customExpenses,dailyOverrides,dailyExpenses,fieldConfig,_ts:Date.now()};}
+function getPayload(){return{orders,fcPeriods,customExpenses,dailyOverrides,dailyExpenses,fieldConfig,employees,_ts:Date.now()};}
 async function syncToCloud(){
   if(!syncConfig.enabled||!syncConfig.apiKey||!syncConfig.binId)return;
   setSyncStatus('busy','syncing…');
@@ -526,9 +526,11 @@ async function syncFromCloud(){
       if(rec.orders)orders=rec.orders;if(rec.fcPeriods)fcPeriods=rec.fcPeriods.map(migratePeriod);
       if(rec.customExpenses)customExpenses=rec.customExpenses;if(rec.dailyOverrides)dailyOverrides=rec.dailyOverrides;
       if(rec.dailyExpenses)dailyExpenses=rec.dailyExpenses;if(rec.fieldConfig)fieldConfig=mergeFields(rec.fieldConfig);
+      if(rec.employees)employees=rec.employees;
       localStorage.setItem('hpdc-orders',JSON.stringify(orders));localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));
       localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));
       localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));
+      if(rec.employees)localStorage.setItem('hpdc-emp',JSON.stringify(employees));
     }
     setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));return true;
   }catch(e){setSyncStatus('err','sync failed');return false;}
@@ -2037,7 +2039,7 @@ function clearCoreSearch(){
   document.getElementById('view').innerHTML=buildView();
   updateBadge();updateSummary();updateUndoBtn();
 }
-function saveEmployees(){localStorage.setItem('hpdc-emp',JSON.stringify(employees));}
+function saveEmployees(){localStorage.setItem('hpdc-emp',JSON.stringify(employees));scheduleSync();}
 function addEmployee(name,role){
   if(!name.trim())return;
   employees.push({id:uid(),name:name.trim(),role:(role||'').trim(),active:true});
