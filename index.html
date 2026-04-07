@@ -324,6 +324,7 @@ tbody td{padding:7px 8px;}
     <nav class="nav" id="nav">
       <button class="active" onclick="sv('daily')">Daily ledger</button>
       <button onclick="sv('summary')">Summary</button>
+      <button onclick="sv('production')">Production</button>
       <button onclick="sv('labels')" id="nav-labels">Core Returns</button>
       <button onclick="sv('settings')">Settings</button>
     </nav>
@@ -357,6 +358,7 @@ if(sessionStorage.getItem('hpdc-unlocked')){
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let orders=[], fcPeriods=[], customExpenses=[], dailyOverrides={};
 let dailyExpenses=[], fieldConfig=[], syncConfig={enabled:false,apiKey:'',binId:''};
+let employees=[]; // [{id,name,role,active}]
 let undoStack=[], redoStack=[], alertThreshold=30;
 let entriesSinceBackup=parseInt(localStorage.getItem('hpdc-esb')||'0');
 let view='daily', editId=null, f=fresh(), newPeriodDraft=null, newCxDraft=null;
@@ -377,7 +379,7 @@ function todayShort(){const d=new Date();return`${d.getMonth()+1}/${d.getDate()}
 function sid(d){return d.replace(/\//g,'_');}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function fresh(){
-  const o={date:'',orderNum:'',customerName:'',description:'',revenue:'',returnSent:false,returnUsed:false,returnCost:'',coreValue:'',trackingNumbers:[],returnedNums:[],reminderLog:[],customerEmail:'',warrantyVoided:false,notes:''};
+  const o={date:'',orderNum:'',customerName:'',technician:'',quantity:'1',description:'',revenue:'',returnSent:false,returnUsed:false,returnCost:'',coreValue:'',trackingNumbers:[],returnedNums:[],reminderLog:[],customerEmail:'',warrantyVoided:false,notes:''};
   fieldConfig.forEach(fc=>{if(!(fc.id in o))o[fc.id]='';});
   return o;
 }
@@ -459,6 +461,8 @@ function loadData(){
     if(ord.coreValue===undefined)ord.coreValue='';
     ord.date=normDate(ord.date)||ord.date; // normalize date format
     if(!ord.customerName)ord.customerName='';
+    if(!ord.technician)ord.technician='';
+    if(!ord.quantity)ord.quantity='1';
     if(!ord.reminderLog)ord.reminderLog=[];
     // migrate: if returnUsed=true and has tracking numbers, mark all as returned
     if(ord.returnUsed&&ord.trackingNumbers.length>0&&ord.returnedNums.length===0)ord.returnedNums=[...ord.trackingNumbers];
@@ -470,6 +474,7 @@ function loadData(){
     fieldConfig=fc?mergeFields(fc):[...DEFAULT_FIELDS];
     if(sc) syncConfig={...syncConfig,...sc};
     if(at!=null) alertThreshold=at;
+    const emp_=g('hpdc-emp');if(emp_)employees=emp_;
     const old=localStorage.getItem('hpdc-fc');
     if(old&&!fcPeriods.length){const v=JSON.parse(old);fcPeriods=[{id:uid(),effectiveDate:'1/1/2025',note:'Migrated',items:DEFAULT_FC_ITEMS.map(x=>({...x,amount:v[{payroll:'payrollWeekly',rent:'rentMonthly',merch:'merchantFeesMonthly',ads:'googleAdsDaily',loan:'ppLoanWeekly'}[x.key]]||x.amount}))}];savePeriods();}
   }catch(err){}
@@ -673,7 +678,7 @@ function sv(v){
   if(v!=='history')searchQuery='';
   if(v!=='daily')lowMarginFilter=false;
   if(v!=='labels'){coreSearch='';coreDateFrom='';coreDateTo='';coreFilter='all';}
-  document.querySelectorAll('.nav button').forEach((b,i)=>b.classList.toggle('active',['daily','summary','labels','settings'][i]===v));
+  document.querySelectorAll('.nav button').forEach((b,i)=>b.classList.toggle('active',['daily','summary','production','labels','settings'][i]===v));
   if(v==='entry'&&!editId){f=fresh();if(entryDatePreset){f.date=entryDatePreset;entryDatePreset=null;}}
 
   updateBadge();render();
@@ -682,6 +687,7 @@ function updateBadge(){const p=orders.reduce((s,o)=>s+pendingLabelCount(o),0),bt
 function render(){document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();updateUndoBtn();}
 function buildView(){
   if(view==='daily')return dailyV();if(view==='summary')return summaryV();
+  if(view==='production')return productionV();
   if(view==='entry')return entryV();if(view==='labels')return labelsV();
   if(view==='history')return histV();if(view==='settings')return settV();
 }
@@ -904,6 +910,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
         // Order details
         +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order details</div>'
         +(o.customerName?'<div style="font-size:12px;margin-bottom:4px;font-weight:600">👤 '+e(o.customerName)+'</div>':'')
+    +(o.technician?'<div style="font-size:12px;margin-bottom:4px;color:var(--blue)">🔧 '+e(o.technician)+' · '+(parseInt(o.quantity)||1)+' head'+(parseInt(o.quantity)>1?'s':'')+'</div>':'')
     +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
         +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:4px;color:var(--amber);font-weight:600">⚠ Core value at risk: '+$$(n(o.coreValue),2)+'</div>':'')
         +(o.returnSent?'<div style="font-size:12px;margin-bottom:4px;color:'+(isOrderReturned(o)?'var(--green)':'var(--amber)')+'">'+( isOrderReturned(o)?'✓ Core returned':'⚑ Core return pending')+'</div>':'')
@@ -914,7 +921,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
     }
     return '<div class="ord-row'+(lowM?' low-margin':'') +'" style="cursor:pointer" onclick="toggleOrdExpand(\''+oid+'\')">'+
       '<span class="ord-num">#'+e(o.orderNum)+'</span>'
-      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+'</span>'
+      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+(o.technician?' <span style="font-size:10px;color:var(--blue)">🔧'+e(o.technician)+'</span>':'')+'</span>'
       +'<span class="ord-rev">'+$$(n(o.revenue),2)+'</span>'
       +'<span class="ord-vc cr">−'+$$(vc(o),2)+'</span>'
       +'<span class="ord-gp '+cc(gp(o))+'">'+$$(gp(o),2)+' <span style="font-size:10px;opacity:.7">'+gpPct(o).toFixed(0)+'%</span></span>'
@@ -979,6 +986,220 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
 function addForDate(d){entryDatePreset=d;sv('entry');}
 
 // ── SUMMARY VIEW ──────────────────────────────────────────────────────────────
+function productionV(){
+  const allOrds=orders.filter(o=>o.date);
+  function qty(o){return Math.max(1,parseInt(o.quantity)||1);}
+  const now=new Date();
+  const startOfWeek=new Date(now);startOfWeek.setDate(now.getDate()-now.getDay());startOfWeek.setHours(0,0,0,0);
+  const startOfMonth=new Date(now.getFullYear(),now.getMonth(),1);
+  const startOfYear=new Date(now.getFullYear(),0,1);
+  function inRange(o,from,to){const d=pd(o.date);return d>=from&&d<=(to||now);}
+  const todayStr=(now.getMonth()+1)+'/'+(now.getDate())+'/'+now.getFullYear();
+  function qtySumRange(ords,from,to){return ords.filter(o=>inRange(o,from,to)).reduce((s,o)=>s+qty(o),0);}
+
+  const totalToday=allOrds.filter(o=>normDate(o.date)===normDate(todayStr)).reduce((s,o)=>s+qty(o),0);
+  const totalWeek=qtySumRange(allOrds,startOfWeek);
+  const totalMonth=qtySumRange(allOrds,startOfMonth);
+  const totalYear=qtySumRange(allOrds,startOfYear);
+  const totalAll=allOrds.reduce((s,o)=>s+qty(o),0);
+
+  // ── History builder ──────────────────────────────────────────────────────
+  function getLast(n,unit){
+    const result=[];
+    for(let i=0;i<n;i++){
+      let start,end,label,sub;
+      if(unit==='week'){
+        const base=new Date(now);base.setDate(now.getDate()-now.getDay()-(i*7));
+        start=new Date(base);start.setHours(0,0,0,0);
+        end=new Date(start);end.setDate(start.getDate()+6);end.setHours(23,59,59);
+        const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        label='Wk '+mn[start.getMonth()]+' '+(start.getDate());
+        sub=(start.getMonth()+1)+'/'+(start.getDate())+' – '+(end.getMonth()+1)+'/'+(end.getDate());
+      } else if(unit==='month'){
+        const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+        start=new Date(d.getFullYear(),d.getMonth(),1);
+        end=new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59);
+        const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        label=mn[d.getMonth()]+' '+d.getFullYear();sub='';
+      } else {
+        const yr=now.getFullYear()-i;
+        start=new Date(yr,0,1);end=new Date(yr,11,31,23,59,59);
+        label=String(yr);sub='';
+      }
+      const ords=allOrds.filter(o=>inRange(o,start,end));
+      const heads=ords.reduce((s,o)=>s+qty(o),0);
+      // Per-tech breakdown
+      const techBreak={};
+      ords.forEach(o=>{const t=(o.technician||'').trim()||'Unassigned';techBreak[t]=(techBreak[t]||0)+qty(o);});
+      result.push({label,sub,heads,orders:ords.length,techBreak,start,end});
+    }
+    return result;
+  }
+
+  // ── State for which history view is open ──────────────────────────────────
+  if(typeof prodHistTab==='undefined')window.prodHistTab='week';
+  if(typeof prodSelectedTech==='undefined')window.prodSelectedTech=null;
+  const hTab=window.prodHistTab||'week';
+  const selectedTech=window.prodSelectedTech;
+  const periods=getLast(hTab==='year'?5:12,hTab);
+  const maxHeads=Math.max(...periods.map(p=>p.heads),1);
+
+  function tabBtn(lbl,tab){
+    const on=hTab===tab;
+    return '<button data-tab="'+tab+'" onclick="window.prodHistTab=this.dataset.tab;document.getElementById(\'view\').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 14px;font-size:12px;font-weight:600;border-radius:var(--r);border:1px solid '+(on?'var(--red)':'var(--border2)')+';background:'+(on?'rgba(204,0,0,.15)':'transparent')+';color:'+(on?'var(--red)':'var(--text2)')+';cursor:pointer;font-family:var(--fh);text-transform:uppercase;letter-spacing:.4px">'+lbl+'</button>';
+  }
+
+  // ── Technician totals (all time) ──────────────────────────────────────────
+  const techs={};
+  allOrds.forEach(o=>{
+    const t=(o.technician||'').trim()||'Unassigned';
+    if(!techs[t])techs[t]={total:0,week:0,month:0,year:0,orders:0};
+    const q=qty(o);
+    techs[t].total+=q;techs[t].orders++;
+    if(inRange(o,startOfWeek))techs[t].week+=q;
+    if(inRange(o,startOfMonth))techs[t].month+=q;
+    if(inRange(o,startOfYear))techs[t].year+=q;
+  });
+  const techList=Object.entries(techs).sort((a,b)=>b[1].total-a[1].total);
+
+  function statBox(lbl,val,sub){
+    return '<div style="padding:14px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);flex:1;min-width:110px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;font-weight:600">'+lbl+'</div><div style="font-size:26px;font-weight:800;font-family:var(--fh)">'+val+'</div>'+(sub?'<div style="font-size:10px;color:var(--text3);margin-top:2px">'+sub+'</div>':'')+'</div>';
+  }
+
+  let html='<h2 style="font-family:var(--fh);font-size:22px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px">Production</h2>';
+
+  // Stat cards
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">'
+    +statBox('Today',totalToday,'heads')
+    +statBox('This week',totalWeek,'heads')
+    +statBox('This month',totalMonth,'heads')
+    +statBox('This year',totalYear,'heads')
+    +statBox('All time',totalAll,'total heads')
+    +'</div>';
+
+  // ── History table ─────────────────────────────────────────────────────────
+  html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;margin-bottom:18px">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">'
+    +'<span style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-right:4px">History:</span>'
+    +tabBtn('Weekly','week')+tabBtn('Monthly','month')+tabBtn('Annually','year')
+    +'</div>';
+
+  // Header
+  const techCols=techList.slice(0,4).map(([n])=>n); // show up to 4 techs as columns
+  const gridCols='140px 1fr 60px 60px'+techCols.map(()=>' 70px').join('');
+  html+='<div style="display:grid;grid-template-columns:'+gridCols+';font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:5px 10px;background:var(--bg3);border-radius:6px 6px 0 0;border:1px solid var(--border);gap:4px;margin-bottom:1px">'
+    +'<span>Period</span><span>Output</span><span style="text-align:right">Heads</span><span style="text-align:right">Orders</span>'
+    +techCols.map(n=>'<span style="text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+e(n)+'">'+e(n.split(' ')[0])+'</span>').join('')
+    +'</div>';
+
+  periods.forEach((p,idx)=>{
+    const pct=Math.round(p.heads/maxHeads*100);
+    const isThis=idx===0;
+    html+='<div style="display:grid;grid-template-columns:'+gridCols+';padding:7px 10px;border:1px solid var(--border);border-top:none;'+(isThis?'background:rgba(204,0,0,.05)':idx%2?'background:rgba(255,255,255,.01)':'')+';align-items:center;gap:4px;font-size:12px">'
+      +'<div><div style="font-weight:'+(isThis?'700':'500')+'">'+p.label+(isThis?' <span style="font-size:9px;background:rgba(204,0,0,.15);color:var(--red);border-radius:3px;padding:1px 5px;font-weight:700">NOW</span>':'')+'</div>'+(p.sub?'<div style="font-size:10px;color:var(--text3)">'+p.sub+'</div>':'')+'</div>'
+      +'<div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden"><div style="height:100%;background:'+(isThis?'var(--red)':'#555')+';border-radius:4px;width:'+pct+'%;min-width:'+(p.heads>0?3:0)+'px;transition:width .3s"></div></div></div>'
+      +'<span style="text-align:right;font-weight:700;color:'+(isThis?'var(--red)':'var(--text)')+'">'+p.heads+'</span>'
+      +'<span style="text-align:right;color:var(--text3)">'+p.orders+'</span>'
+      +techCols.map(n=>'<span style="text-align:right;font-weight:600;color:var(--blue)">'+(p.techBreak[n]||'—')+'</span>').join('')
+      +'</div>';
+  });
+  html+='</div>';
+
+  // ── Technician leaderboard ────────────────────────────────────────────────
+  if(techList.length){
+    html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:18px">'
+      +'<div style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Technician leaderboard</div>'
+      +'<div style="display:grid;grid-template-columns:1fr 65px 65px 65px 75px 60px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:6px 14px;background:var(--bg3);border-bottom:1px solid var(--border)">'
+      +'<span>Technician</span><span style="text-align:right">Week</span><span style="text-align:right">Month</span><span style="text-align:right">Year</span><span style="text-align:right">All time</span><span style="text-align:right">Orders</span></div>'
+      +techList.map(([name,t],idx)=>{
+        const pct=totalAll?Math.round(t.total/totalAll*100):0;
+        const isSel=selectedTech===name;
+        const encodedName=encodeURIComponent(name);
+        return '<div data-tech="'+encodedName+'" onclick="selectTech(this.dataset.tech)" style="display:grid;grid-template-columns:1fr 65px 65px 65px 75px 60px;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center;font-size:13px;cursor:pointer;'+(isSel?'background:rgba(204,0,0,.08);border-left:3px solid var(--red);':idx%2?'background:rgba(255,255,255,.02)':'')+'">'
+          +'<div><div style="display:flex;align-items:center;gap:8px"><div style="font-weight:700">'+e(name)+'</div>'+(isSel?'<span style="font-size:10px;background:rgba(204,0,0,.15);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">viewing ↓</span>':'<span style="font-size:10px;color:var(--text3)">click to expand</span>')+'</div><div style="height:4px;background:var(--bg4);border-radius:2px;margin-top:4px;max-width:140px"><div style="height:100%;background:'+(isSel?'var(--red)':'var(--red)')+';border-radius:2px;width:'+pct+'%"></div></div></div>'
+          +'<span style="text-align:right;font-weight:600">'+t.week+'</span>'
+          +'<span style="text-align:right;font-weight:600">'+t.month+'</span>'
+          +'<span style="text-align:right;font-weight:600">'+t.year+'</span>'
+          +'<span style="text-align:right;font-weight:700;font-size:14px;color:var(--text)">'+t.total+'</span>'
+          +'<span style="text-align:right;color:var(--text3)">'+t.orders+'</span>'
+          +'</div>'
+          // ── Inline tech detail panel ──
+          +(isSel?buildTechDetail(name,allOrds,qty,getLast,hTab):'');
+      }).join('')
+      +'</div>';
+  }
+
+  return html;
+}
+
+function selectTech(encodedName){
+  const name=decodeURIComponent(encodedName);
+  window.prodSelectedTech=window.prodSelectedTech===name?null:name;
+  document.getElementById('view').innerHTML=buildView();
+  updateBadge();updateSummary();
+}
+function buildTechDetail(techName,allOrds,qty,getLast,hTab){
+  const techOrds=allOrds.filter(o=>(o.technician||'').trim()===techName);
+  if(!techOrds.length)return '<div style="grid-column:1/-1;padding:12px 14px;color:var(--text3);font-size:12px">No orders yet.</div>';
+
+  // History table for this tech
+  const periods=getLast(hTab==='year'?5:12,hTab);
+  const maxH=Math.max(...periods.map(p=>{
+    const start=p.start,end=p.end;
+    return techOrds.filter(o=>{const d=pd(o.date);return d>=start&&d<=end;}).reduce((s,o)=>s+qty(o),0);
+  }),1);
+
+  let html='<div style="grid-column:1/-1;background:rgba(0,0,0,.2);border-top:1px solid var(--border);padding:12px 14px">';
+
+  // Stat row for this tech
+  const now=new Date();
+  const startOfWeek=new Date(now);startOfWeek.setDate(now.getDate()-now.getDay());startOfWeek.setHours(0,0,0,0);
+  const startOfMonth=new Date(now.getFullYear(),now.getMonth(),1);
+  const startOfYear=new Date(now.getFullYear(),0,1);
+  function inR(o,from,to){const d=pd(o.date);return d>=from&&d<=(to||now);}
+  const tw=techOrds.filter(o=>inR(o,startOfWeek)).reduce((s,o)=>s+qty(o),0);
+  const tm=techOrds.filter(o=>inR(o,startOfMonth)).reduce((s,o)=>s+qty(o),0);
+  const ty=techOrds.filter(o=>inR(o,startOfYear)).reduce((s,o)=>s+qty(o),0);
+  const ta=techOrds.reduce((s,o)=>s+qty(o),0);
+
+  html+='<div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">'+e(techName)+' — Individual history</div>';
+  html+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  [['This week',tw],['This month',tm],['This year',ty],['All time',ta]].forEach(([l,v])=>{
+    html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;flex:1;min-width:80px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">'+l+'</div><div style="font-size:20px;font-weight:800;font-family:var(--fh)">'+v+'</div></div>';
+  });
+  html+='</div>';
+
+  // History bars
+  html+='<div style="margin-bottom:12px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px">Output per period ('+hTab+')</div>';
+  html+='<div style="display:flex;flex-direction:column;gap:3px">';
+  periods.forEach((p,i)=>{
+    const heads=techOrds.filter(o=>{const d=pd(o.date);return d>=p.start&&d<=p.end;}).reduce((s,o)=>s+qty(o),0);
+    const pct=Math.round(heads/maxH*100);
+    const isNow=i===0;
+    html+='<div style="display:flex;align-items:center;gap:8px;font-size:11px">'
+      +'<span style="width:70px;flex-shrink:0;font-weight:'+(isNow?'700':'400')+';color:'+(isNow?'var(--text)':'var(--text2)')+'">'+p.label+'</span>'
+      +'<div style="flex:1;height:14px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;background:'+(isNow?'var(--red)':'#555')+';border-radius:3px;width:'+pct+'%;min-width:'+(heads>0?3:0)+'px"></div></div>'
+      +'<span style="width:28px;text-align:right;font-weight:700;color:'+(isNow?'var(--red)':'var(--text)')+'">'+heads+'</span>'
+      +'</div>';
+  });
+  html+='</div></div>';
+
+  // Recent orders table
+  const recent=techOrds.sort((a,b)=>pd(b.date)-pd(a.date)).slice(0,15);
+  html+='<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px">Recent orders</div>';
+  html+='<div style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden">';
+  recent.forEach((o,i)=>{
+    html+='<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--border);font-size:11px;'+(i%2?'background:rgba(255,255,255,.02)':'')+'">'
+      +'<span style="color:var(--text3);flex-shrink:0;width:48px">'+o.date+'</span>'
+      +'<span style="color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">#'+e(o.orderNum)+' '+e(o.description)+'</span>'
+      +'<span style="color:var(--amber);font-weight:700;flex-shrink:0">'+qty(o)+' head'+(qty(o)!==1?'s':'')+'</span>'
+      +'</div>';
+  });
+  html+='</div>';
+
+  html+='</div>';
+  return html;
+}
 function summaryV(){
   if(!orders.length)return`<div class="empty"><h3>No data yet</h3></div>`;
   const ranges=dateRanges();
@@ -997,8 +1218,86 @@ function summaryV(){
       <div class="be-metric"><div class="be-lbl">Revenue needed</div><div class="be-val cg">${revNeeded>0?$$(b/(avgGP/avgRev)):'—'}</div></div>
     </div>
   </div>`;
-  return beHtml+`<div class="sum-cards">${['today','week','month','year'].map(k=>{const r=ranges[k];return buildSumCard(r,ordersInRange(r.start,r.end),expensesInRange(r.start,r.end));}).join('')}</div>`;
+  // ── History periods ──────────────────────────────────────────────────────
+  // Build last N weeks
+  function getLast(cnt, unit){
+    const result=[];
+    const now=new Date();
+    for(let i=0;i<cnt;i++){
+      let start,end,label;
+      if(unit==='week'){
+        end=new Date(now);end.setDate(now.getDate()-(now.getDay())-(i*7));end.setHours(23,59,59);
+        start=new Date(end);start.setDate(end.getDate()-6);start.setHours(0,0,0,0);
+        label='Wk of '+(start.getMonth()+1)+'/'+start.getDate();
+      } else if(unit==='month'){
+        const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+        start=new Date(d.getFullYear(),d.getMonth(),1);
+        end=new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59);
+        const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        label=mn[d.getMonth()]+' '+d.getFullYear();
+      } else {
+        const yr=now.getFullYear()-i;
+        start=new Date(yr,0,1);end=new Date(yr,11,31,23,59,59);
+        label=String(yr);
+      }
+      const ro=ordersInRange(start,end),re=expensesInRange(start,end);
+      const rev=ro.reduce((s,o)=>s+n(o.revenue),0);
+      const varC=ro.reduce((s,o)=>s+vc(o),0);
+      const days=Math.max(1,Math.round((end-start)/86400000));
+      const fixC=ro.length?days*getDayBurn(((start.getMonth()+1)+'/'+start.getDate()+'/'+start.getFullYear())):0;
+      const expC=re.reduce((s,x)=>s+n(x.amount),0);
+      const net=rev-varC-fixC-expC;
+      result.push({label,rev,varC,fixC,expC,net,orders:ro.length,start,end});
+    }
+    return result;
+  }
+
+  const histTab=typeof summaryHistTab!=='undefined'?summaryHistTab:'none';
+  const weeks=getLast(12,'week');
+  const months=getLast(12,'month');
+  const years=getLast(5,'year');
+
+  function histBtn(lbl,tab){
+    const on=histTab===tab;
+    return `<button onclick="summaryHistTab='${tab}';document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 14px;font-size:12px;font-weight:600;border-radius:var(--r);border:1px solid ${on?'var(--red)':'var(--border2)'};background:${on?'rgba(204,0,0,.15)':'transparent'};color:${on?'var(--red)':'var(--text2)'};cursor:pointer;font-family:var(--fh);text-transform:uppercase;letter-spacing:.4px">${lbl}</button>`;
+  }
+
+  function histTable(periods){
+    const maxRev=Math.max(...periods.map(p=>p.rev),1);
+    return `<div style="border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-top:10px">
+      <div style="display:grid;grid-template-columns:90px 1fr 90px 90px 90px 90px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:6px 14px;background:var(--bg3);border-bottom:1px solid var(--border);gap:4px">
+        <span>Period</span><span>Revenue bar</span><span style="text-align:right">Revenue</span><span style="text-align:right">Var costs</span><span style="text-align:right">Net</span><span style="text-align:right">Orders</span>
+      </div>
+      ${periods.map(p=>`<div style="display:grid;grid-template-columns:90px 1fr 90px 90px 90px 90px;padding:7px 14px;border-bottom:1px solid var(--border);align-items:center;gap:4px;font-size:12px">
+        <span style="font-weight:600;font-size:11px">${p.label}</span>
+        <div style="height:6px;background:var(--bg4);border-radius:3px"><div style="height:100%;background:${p.net>=0?'var(--green)':'#f87171'};border-radius:3px;width:${Math.round(p.rev/maxRev*100)}%;min-width:${p.rev>0?2:0}px"></div></div>
+        <span style="text-align:right;font-weight:600;color:var(--green)">${p.rev>0?$$(p.rev,0):'—'}</span>
+        <span style="text-align:right;color:#f87171">${p.varC>0?'−'+$$(p.varC,0):'—'}</span>
+        <span style="text-align:right;font-weight:700;color:${p.net>=0?'var(--green)':'#f87171'}">${p.rev>0?(p.net>=0?'+':'')+$$(p.net,0):'—'}</span>
+        <span style="text-align:right;color:var(--text3)">${p.orders}</span>
+      </div>`).join('')}
+    </div>`;
+  }
+
+  let histHtml='';
+  if(histTab==='week') histHtml=histTable(weeks);
+  else if(histTab==='month') histHtml=histTable(months);
+  else if(histTab==='year') histHtml=histTable(years);
+
+  const histSection=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:${histTab!=='none'?'10':'0'}px">
+      <span style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-right:4px">History:</span>
+      ${histBtn('Weekly','week')}
+      ${histBtn('Monthly','month')}
+      ${histBtn('Annually','year')}
+      ${histTab!=='none'?'<button data-tab="none" onclick="summaryHistTab=this.dataset.tab;document.getElementById(\'view\').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 10px;font-size:11px;background:transparent;border:1px solid var(--border);border-radius:var(--r);color:var(--text3);cursor:pointer">✕</button>':''}
+    </div>
+    ${histHtml}
+  </div>`;
+
+  return beHtml+histSection+`<div class="sum-cards">${['today','week','month','year'].map(k=>{const r=ranges[k];return buildSumCard(r,ordersInRange(r.start,r.end),expensesInRange(r.start,r.end));}).join('')}</div>`;
 }
+let summaryHistTab='none';
 
 let chartInstances={};
 function buildSumCard(range,ro,re){
@@ -1065,6 +1364,17 @@ function entryV(){
     ${prev}
     <div class="frow">${fg('date','Date shipped',f.date,'text')}${fg('orderNum','Order #',f.orderNum,'text')}</div>
     <div class="frow">${fg('customerName','Customer name',f.customerName||'','text')}${fg('description','Description',f.description,'text')}</div>
+    <div class="frow">
+      <div class="fg">
+        <label>Technician (who built it)</label>
+        <select id="f-technician" onchange="fi('technician',this.value)" style="border:1px solid var(--border2);border-radius:var(--r);padding:8px 10px;font-size:13px;font-family:var(--fb);background:var(--bg2);color:var(--text);width:100%">
+          <option value="">— Select technician —</option>
+          ${employees.filter(emp=>emp.active).map(emp=>`<option value="${e(emp.name)}" ${f.technician===emp.name?'selected':''}>${e(emp.name)}${emp.role?' ('+e(emp.role)+')':''}</option>`).join('')}
+          ${f.technician&&!employees.find(emp=>emp.name===f.technician)?`<option value="${e(f.technician)}" selected>${e(f.technician)} (removed)</option>`:''}
+        </select>
+      </div>
+      ${fg('quantity','# of heads',f.quantity||'1','number')}
+    </div>
     <div class="frow">${fg('revenue','Revenue ($)',f.revenue,'number')}<div></div></div>
     ${fieldRows}
     <div class="frow">
@@ -1617,6 +1927,26 @@ function settV(){
         </div>`).join('');
       })()}
     </div>
+    <div class="ss"><div class="ss-title">Employee roster</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.6">Manage your team. Employees appear as dropdown options in the Technician field when entering orders — no more typos or duplicate names.</p>
+      ${employees.length?`<div style="border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:12px">
+        <div style="display:grid;grid-template-columns:1fr 120px 80px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:6px 12px;background:var(--bg3);border-bottom:1px solid var(--border)">
+          <span>Name</span><span>Role</span><span></span>
+        </div>
+        ${employees.map(emp=>`<div style="display:grid;grid-template-columns:1fr 120px 80px;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
+          <span style="font-weight:600">${e(emp.name)}</span>
+          <span style="color:var(--text3);font-size:12px">${e(emp.role||'—')}</span>
+          <div style="display:flex;justify-content:flex-end">
+            <button class="btn-d" style="font-size:11px;padding:3px 9px" onclick="removeEmployee('${emp.id}')">Remove</button>
+          </div>
+        </div>`).join('')}
+      </div>`:'<p style="font-size:13px;color:var(--text3);margin-bottom:12px">No employees added yet.</p>'}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div class="fg" style="flex:1;min-width:150px"><label>Name</label><input type="text" id="new-emp-name" class="inp-base" style="width:100%" placeholder="e.g. Mike" onkeydown="if(event.key==='Enter')addEmployee(document.getElementById('new-emp-name').value,document.getElementById('new-emp-role').value)"></div>
+        <div class="fg" style="width:140px"><label>Role (optional)</label><input type="text" id="new-emp-role" class="inp-base" style="width:100%" placeholder="e.g. Lead tech" onkeydown="if(event.key==='Enter')addEmployee(document.getElementById('new-emp-name').value,document.getElementById('new-emp-role').value)"></div>
+        <button class="btn-p" style="padding:8px 16px;margin-bottom:0" onclick="addEmployee(document.getElementById('new-emp-name').value,document.getElementById('new-emp-role').value);document.getElementById('new-emp-name').value='';document.getElementById('new-emp-role').value=''">+ Add employee</button>
+      </div>
+    </div>
     <div class="ss"><div class="ss-title">Export / import</div>
       <div class="fc-row" style="gap:8px;flex-wrap:wrap">
         <button class="btn-g" onclick="exportData()">Export JSON backup</button>
@@ -1706,6 +2036,16 @@ function clearCoreSearch(){
   coreSearch='';coreDateFrom='';coreDateTo='';coreFilter='all';
   document.getElementById('view').innerHTML=buildView();
   updateBadge();updateSummary();updateUndoBtn();
+}
+function saveEmployees(){localStorage.setItem('hpdc-emp',JSON.stringify(employees));}
+function addEmployee(name,role){
+  if(!name.trim())return;
+  employees.push({id:uid(),name:name.trim(),role:(role||'').trim(),active:true});
+  saveEmployees();render();
+}
+function removeEmployee(id){
+  employees=employees.filter(e=>e.id!==id);
+  saveEmployees();render();
 }
 function saveEmailTemplate(v){emailTemplate=v;localStorage.setItem('hpdc-etpl',v);}
 function resetEmailTemplate(){emailTemplate="Please drop the core off at any UPS location at your earliest convenience.\n\nThank you for your business!\nHeavy Duty Parts Company";localStorage.setItem('hpdc-etpl',emailTemplate);const el=document.getElementById('email-tpl-inp');if(el)el.value=emailTemplate;}
@@ -1972,6 +2312,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
         // Order details
         +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order details</div>'
         +(o.customerName?'<div style="font-size:12px;margin-bottom:4px;font-weight:600">👤 '+e(o.customerName)+'</div>':'')
+    +(o.technician?'<div style="font-size:12px;margin-bottom:4px;color:var(--blue)">🔧 '+e(o.technician)+' · '+(parseInt(o.quantity)||1)+' head'+(parseInt(o.quantity)>1?'s':'')+'</div>':'')
     +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
         +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:4px;color:var(--amber);font-weight:600">⚠ Core value at risk: '+$$(n(o.coreValue),2)+'</div>':'')
         +(o.returnSent?'<div style="font-size:12px;margin-bottom:4px;color:'+(isOrderReturned(o)?'var(--green)':'var(--amber)')+'">'+( isOrderReturned(o)?'✓ Core returned':'⚑ Core return pending')+'</div>':'')
@@ -1982,7 +2323,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
     }
     return '<div class="ord-row'+(lowM?' low-margin':'') +'" style="cursor:pointer" onclick="toggleOrdExpand(\''+oid+'\')">'+
       '<span class="ord-num">#'+e(o.orderNum)+'</span>'
-      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+'</span>'
+      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+(o.technician?' <span style="font-size:10px;color:var(--blue)">🔧'+e(o.technician)+'</span>':'')+'</span>'
       +'<span class="ord-rev">'+$$(n(o.revenue),2)+'</span>'
       +'<span class="ord-vc cr">−'+$$(vc(o),2)+'</span>'
       +'<span class="ord-gp '+cc(gp(o))+'">'+$$(gp(o),2)+' <span style="font-size:10px;opacity:.7">'+gpPct(o).toFixed(0)+'%</span></span>'
@@ -2045,28 +2386,6 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
   </div>`;
 }
 function addForDate(d){entryDatePreset=d;sv('entry');}
-
-// ── SUMMARY VIEW ──────────────────────────────────────────────────────────────
-function summaryV(){
-  if(!orders.length)return`<div class="empty"><h3>No data yet</h3></div>`;
-  const ranges=dateRanges();
-  // break even
-  const b=getDayBurn(todayShort());
-  const avgVC=orders.length?orders.reduce((s,o)=>s+vc(o),0)/orders.length:0;
-  const avgRev=orders.length?orders.reduce((s,o)=>s+n(o.revenue),0)/orders.length:0;
-  const avgGP=avgRev-avgVC;
-  const ordersNeeded=avgGP>0?Math.ceil(b/avgGP):'∞';
-  const revNeeded=avgGP>0?b/(avgGP/avgRev)*100:0;
-  const beHtml=`<div class="breakeven-box">
-    <div class="be-title">Break-even today (based on averages)</div>
-    <div class="be-grid">
-      <div class="be-metric"><div class="be-lbl">Daily burn</div><div class="be-val co">${$$(b,2)}</div></div>
-      <div class="be-metric"><div class="be-lbl">Orders needed</div><div class="be-val cp">${ordersNeeded}</div></div>
-      <div class="be-metric"><div class="be-lbl">Revenue needed</div><div class="be-val cg">${revNeeded>0?$$(b/(avgGP/avgRev)):'—'}</div></div>
-    </div>
-  </div>`;
-  return beHtml+`<div class="sum-cards">${['today','week','month','year'].map(k=>{const r=ranges[k];return buildSumCard(r,ordersInRange(r.start,r.end),expensesInRange(r.start,r.end));}).join('')}</div>`;
-}
 
 </script>
 </body>
