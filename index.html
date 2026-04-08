@@ -640,10 +640,27 @@ function ordersInRange(s,e){return orders.filter(o=>{const d=pd(o.date);return d
 function expensesInRange(s,e){return dailyExpenses.filter(x=>{const d=pd(x.date);return d>=s&&d<=e;});}
 
 // ── SUMMARY CALCS ─────────────────────────────────────────────────────────────
-function calcSummary(ro,re){
+function calcSummary(ro,re,rangeStart,rangeEnd){
   const dates=[...new Set(ro.map(o=>o.date))];
   const rev=ro.reduce((s,o)=>s+n(o.revenue),0),vc_=ro.reduce((s,o)=>s+vc(o),0);
-  const fixed=dates.reduce((s,d)=>s+getDayBurn(d),0);
+  // Fixed costs: walk every calendar day in the range, but never before the business start date
+  let fixed=0;
+  const allOrderDates=orders.map(o=>pd(o.date)).filter(d=>d);
+  const bizStart=allOrderDates.length?new Date(Math.min(...allOrderDates.map(d=>d.getTime()))):null;
+  if(rangeStart&&rangeEnd){
+    const cur=new Date(rangeStart);
+    // Clamp to business start — don't charge fixed costs before first ever order
+    if(bizStart&&cur<bizStart){cur.setTime(bizStart.getTime());}
+    cur.setHours(0,0,0,0);
+    const end=new Date(rangeEnd);end.setHours(23,59,59);
+    while(cur<=end){
+      const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
+      fixed+=getDayBurn(dstr);
+      cur.setDate(cur.getDate()+1);
+    }
+  } else {
+    fixed=dates.reduce((s,d)=>s+getDayBurn(d),0);
+  }
   const expTotal=re.reduce((s,x)=>s+n(x.amount),0);
   const net=rev-vc_-fixed-expTotal,margin=rev>0?(net/rev)*100:0;
   const vb={};fieldConfig.filter(f=>f.active).forEach(f=>{vb[f.id]={label:f.label,total:ro.reduce((s,o)=>s+n(o[f.id]||0),0)};});
@@ -651,7 +668,6 @@ function calcSummary(ro,re){
   const fb={custom:{}};
   dates.forEach(d=>{const period=getPeriod(d);period.items.forEach(item=>{if(!fb[item.key])fb[item.key]={name:item.name,total:0};fb[item.key].total+=getDayItemRate(d,item.key);});getActiveCx(d).forEach(cx=>{if(!fb.custom[cx.id])fb.custom[cx.id]={name:cx.name,total:0};fb.custom[cx.id].total+=getCxRate(d,cx.id);});});
   let bestDay={date:'—',rev:0};dates.forEach(d=>{const dr=ro.filter(o=>o.date===d).reduce((s,o)=>s+n(o.revenue),0);if(dr>bestDay.rev)bestDay={date:d,rev:dr};});
-  // Top products by revenue
   const prodMap={};ro.forEach(o=>{const k=e(o.description.split(' ').slice(0,3).join(' '));if(!prodMap[k])prodMap[k]={desc:o.description,rev:0,count:0};prodMap[k].rev+=n(o.revenue);prodMap[k].count++;});
   const topProds=Object.values(prodMap).sort((a,b)=>b.rev-a.rev).slice(0,5);
   return{ro,dates,rev,vc_,fixed,expTotal,net,margin,avgOrder:ro.length?rev/ro.length:0,vb,fb,bestDay,orderCount:ro.length,dayCount:dates.length,topProds};
@@ -1338,7 +1354,7 @@ let chartInstances={};
 function buildSumCard(range,ro,re){
   const head=`<div class="sum-card-head"><span class="sum-card-title">${range.label}</span><span class="sum-card-sub">${range.sub}</span></div>`;
   if(!ro.length)return`<div class="sum-card">${head}<div class="no-data">No orders in this period.</div></div>`;
-  const sm=calcSummary(ro,re);
+  const sm=calcSummary(ro,re,range.start,range.end);
   const r=sm.rev;
   const bar=(lbl,amt,color,pctV)=>`<div class="sum-bar-row"><span class="sum-bar-lbl">${lbl}</span><div class="sum-bar-track"><div class="sum-bar-fill" style="width:${Math.min(100,Math.max(0,pctV))}%;background:${color}"></div></div><span class="sum-bar-amt" style="color:${color}">${$$(amt,2)}</span><span class="sum-bar-pct">${pct(pctV)}</span></div>`;
   const vbRows=Object.values(sm.vb).filter(x=>x.total>0).map(x=>`<div class="bk-row"><span class="bk-lbl">${e(x.label)}</span><span class="bk-val">${$$(x.total,2)}</span></div>`).join('');
