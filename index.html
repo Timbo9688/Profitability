@@ -305,7 +305,6 @@ tbody td{padding:7px 8px;}
         <button class="undo-btn" onclick="uploadBg()" style="font-size:11px">⬛ BG</button>
         <button class="undo-btn" onclick="openDoom()" style="font-size:11px;color:#f97316;border-color:#f97316" title="Play Doom">🔫 DOOM</button>
         <button class="undo-btn" id="undo-btn" onclick="undo()" disabled>↩ Undo</button>
-        <button class="undo-btn" id="redo-btn" onclick="redo()" disabled>Redo ↪</button>
         <span style="font-size:11px;color:var(--text3);display:flex;align-items:center;gap:4px">
           <span class="sync-dot sync-idle" id="sync-dot"></span>
           <span id="sync-status">local</span>
@@ -358,9 +357,9 @@ if(sessionStorage.getItem('hpdc-unlocked')){
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let orders=[], fcPeriods=[], customExpenses=[], dailyOverrides={};
 let dailyExpenses=[], fieldConfig=[], syncConfig={enabled:false,apiKey:'',binId:''};
+let burnRates=[]; // [{id,effectiveDate,dailyTotal,note}]
 let employees=[]; // [{id,name,role,active}]
-let undoStack=[], redoStack=[], alertThreshold=30;
-let entriesSinceBackup=parseInt(localStorage.getItem('hpdc-esb')||'0');
+let undoStack=[], alertThreshold=30;
 let view='daily', editId=null, f=fresh(), newPeriodDraft=null, newCxDraft=null;
 let entryDatePreset=null, addingExpDate=null;
 
@@ -390,7 +389,6 @@ function upsUrl(nums){return 'https://www.ups.com/track?tracknum='+nums.filter(t
 function openUPS(nums){window.open(upsUrl(nums),'_blank');}
 // ── UNDO ─────────────────────────────────────────────────────────────────────
 function pushUndo(){
-  redoStack=[];
   undoStack.push({
     orders:JSON.parse(JSON.stringify(orders)),
     fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
@@ -404,16 +402,6 @@ function pushUndo(){
 }
 function undo(){
   if(!undoStack.length)return;
-  // Save current state to redo stack
-  redoStack.push({
-    orders:JSON.parse(JSON.stringify(orders)),
-    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
-    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
-    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
-    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
-    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
-  });
-  if(redoStack.length>20)redoStack.shift();
   const p=undoStack.pop();
   orders=p.orders;fcPeriods=p.fcPeriods;customExpenses=p.customExpenses;
   dailyOverrides=p.dailyOverrides;dailyExpenses=p.dailyExpenses;fieldConfig=p.fieldConfig;
@@ -423,25 +411,6 @@ function undo(){
 function updateUndoBtn(){
   const btn=document.getElementById('undo-btn');
   if(btn){btn.disabled=undoStack.length===0;btn.title=undoStack.length?`Undo (${undoStack.length} step${undoStack.length>1?'s':''} available)`:'Nothing to undo';}
-  const rbtn=document.getElementById('redo-btn');
-  if(rbtn){rbtn.disabled=redoStack.length===0;rbtn.title=redoStack.length?`Redo (${redoStack.length} step${redoStack.length>1?'s':''} available)`:'Nothing to redo';}
-}
-function redo(){
-  if(!redoStack.length)return;
-  // Save current state to undoStack before redoing
-  undoStack.push({
-    orders:JSON.parse(JSON.stringify(orders)),
-    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
-    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
-    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
-    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
-    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
-  });
-  const next=redoStack.pop();
-  orders=next.orders;fcPeriods=next.fcPeriods;customExpenses=next.customExpenses;
-  dailyOverrides=next.dailyOverrides;dailyExpenses=next.dailyExpenses;fieldConfig=next.fieldConfig;
-  saveAll();savePeriods();saveCx();saveFields();
-  updateUndoBtn();render();
 }
 
 // ── STORAGE ───────────────────────────────────────────────────────────────────
@@ -459,11 +428,10 @@ function loadData(){
     if(!ord.returnedNums)ord.returnedNums=[];
     if(ord.warrantyVoided===undefined)ord.warrantyVoided=false;
     if(ord.coreValue===undefined)ord.coreValue='';
-    ord.date=normDate(ord.date)||ord.date; // normalize date format
+    if(!ord.reminderLog)ord.reminderLog=[];
     if(!ord.customerName)ord.customerName='';
     if(!ord.technician)ord.technician='';
     if(!ord.quantity)ord.quantity='1';
-    if(!ord.reminderLog)ord.reminderLog=[];
     // migrate: if returnUsed=true and has tracking numbers, mark all as returned
     if(ord.returnUsed&&ord.trackingNumbers.length>0&&ord.returnedNums.length===0)ord.returnedNums=[...ord.trackingNumbers];
   });}
@@ -475,10 +443,23 @@ function loadData(){
     if(sc) syncConfig={...syncConfig,...sc};
     if(at!=null) alertThreshold=at;
     const emp_=g('hpdc-emp');if(emp_)employees=emp_;
+    const br_=g('hpdc-burn');
+    if(br_)burnRates=br_;
     const old=localStorage.getItem('hpdc-fc');
     if(old&&!fcPeriods.length){const v=JSON.parse(old);fcPeriods=[{id:uid(),effectiveDate:'1/1/2025',note:'Migrated',items:DEFAULT_FC_ITEMS.map(x=>({...x,amount:v[{payroll:'payrollWeekly',rent:'rentMonthly',merch:'merchantFeesMonthly',ads:'googleAdsDaily',loan:'ppLoanWeekly'}[x.key]]||x.amount}))}];savePeriods();}
   }catch(err){}
   if(!fcPeriods.length){fcPeriods=[{id:uid(),effectiveDate:today(),note:'Initial setup',items:DEFAULT_FC_ITEMS.map(x=>({...x}))}];savePeriods();}
+  // Migrate old fcPeriods to new burnRates if needed
+  if(!burnRates.length && fcPeriods.length){
+    burnRates=fcPeriods.map(p=>{
+      const daily=p.items?p.items.reduce((s,item)=>{
+        const a=parseFloat(item.amount)||0;
+        return s+(item.freq==='daily'?a:item.freq==='weekly'?a/7:a/30);
+      },0):0;
+      return{id:uid(),effectiveDate:p.effectiveDate,dailyTotal:Math.round(daily*100)/100,note:p.note||''};
+    }).sort((a,b)=>pd(b.effectiveDate)-pd(a.effectiveDate));
+    saveBurnRates();
+  }
   initNewPeriod();
 }
 function migratePeriod(p){
@@ -501,24 +482,27 @@ function saveAll(){
   if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId)scheduleSync();
 }
 function savePeriods(){try{localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}catch(e){}}
+function saveBurnRates(){
+  try{
+    localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));
+    if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId)scheduleSync();
+  }catch(e){}
+}
+function getEffectiveBurn(dateStr){
+  if(!burnRates.length)return 0;
+  const d=pd(dateStr);
+  const sorted=[...burnRates].sort((a,b)=>pd(b.effectiveDate)-pd(a.effectiveDate));
+  const match=sorted.find(r=>pd(r.effectiveDate)<=d);
+  return match?parseFloat(match.dailyTotal)||0:parseFloat(sorted[sorted.length-1].dailyTotal)||0;
+}
 function saveCx(){try{localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));}catch(e){}}
 function saveFields(){try{localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));}catch(e){}}
 function saveSyncConf(){try{localStorage.setItem('hpdc-sync',JSON.stringify({enabled:syncConfig.enabled,binId:syncConfig.binId,apiKey:syncConfig.apiKey}));}catch(e){}}
-function stamp(){const ts=Date.now();localStorage.setItem('hpdc-local-ts',ts);const el=document.getElementById('last-saved');if(el)el.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+function stamp(){const el=document.getElementById('last-saved');if(el)el.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
 
 // ── CLOUD SYNC ────────────────────────────────────────────────────────────────
 function setSyncStatus(s,msg){const dot=document.getElementById('sync-dot'),txt=document.getElementById('sync-status');if(dot)dot.className='sync-dot sync-'+s;if(txt)txt.textContent=msg||s;}
-function getPayload(){
-  let versions=[];try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
-  const bg=localStorage.getItem('hpdc-bg')||null;
-  return{
-    orders,fcPeriods,customExpenses,dailyOverrides,dailyExpenses,fieldConfig,
-    employees,alertThreshold,coreReturnDays,emailTemplate,
-    reviewedOrders:[...reviewedOrders],
-    appPassword,versions,bg,
-    _ts:Date.now()
-  };
-}
+function getPayload(){return{orders,fcPeriods,customExpenses,dailyOverrides,dailyExpenses,fieldConfig,burnRates,employees,_ts:Date.now()};}
 async function syncToCloud(){
   if(!syncConfig.enabled||!syncConfig.apiKey||!syncConfig.binId)return;
   setSyncStatus('busy','syncing…');
@@ -536,26 +520,9 @@ async function syncFromCloud(){
       if(rec.orders)orders=rec.orders;if(rec.fcPeriods)fcPeriods=rec.fcPeriods.map(migratePeriod);
       if(rec.customExpenses)customExpenses=rec.customExpenses;if(rec.dailyOverrides)dailyOverrides=rec.dailyOverrides;
       if(rec.dailyExpenses)dailyExpenses=rec.dailyExpenses;if(rec.fieldConfig)fieldConfig=mergeFields(rec.fieldConfig);
-      if(rec.employees)employees=rec.employees;
-      if(rec.alertThreshold!=null)alertThreshold=rec.alertThreshold;
-      if(rec.coreReturnDays!=null)coreReturnDays=rec.coreReturnDays;
-      if(rec.emailTemplate!=null)emailTemplate=rec.emailTemplate;
-      if(rec.reviewedOrders)reviewedOrders=new Set(rec.reviewedOrders);
-      localStorage.setItem('hpdc-orders',JSON.stringify(orders));
-      localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));
-      localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));
-      localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));
-      localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));
-      localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));
-      if(rec.employees)localStorage.setItem('hpdc-emp',JSON.stringify(employees));
-      if(rec.alertThreshold!=null)localStorage.setItem('hpdc-at',rec.alertThreshold);
-      if(rec.coreReturnDays!=null)localStorage.setItem('hpdc-crd',rec.coreReturnDays);
-      if(rec.emailTemplate!=null)localStorage.setItem('hpdc-etpl',rec.emailTemplate);
-      if(rec.reviewedOrders)localStorage.setItem('hpdc-reviewed',JSON.stringify(rec.reviewedOrders));
-      if(rec.appPassword){appPassword=rec.appPassword;localStorage.setItem('hpdc-pass',rec.appPassword);}
-      if(rec.versions)localStorage.setItem('hpdc-versions',JSON.stringify(rec.versions));
-      if(rec.bg){localStorage.setItem('hpdc-bg',rec.bg);applyBg();}
-      else if(rec.bg===null){localStorage.removeItem('hpdc-bg');applyBg();}
+      localStorage.setItem('hpdc-orders',JSON.stringify(orders));localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));
+      localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));
+      localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));
     }
     setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));return true;
   }catch(e){setSyncStatus('err','sync failed');return false;}
@@ -569,27 +536,7 @@ async function createBin(){
 let syncPending=false;
 function scheduleSync(){if(syncPending)return;syncPending=true;setTimeout(()=>{syncPending=false;syncToCloud();},1500);}
 let syncTimer=null;
-function startAutoPoll(){
-  if(syncTimer)clearInterval(syncTimer);
-  if(!syncConfig.enabled)return;
-  syncTimer=setInterval(async()=>{
-    if(!document.hidden&&!syncPending){
-      // Only pull — never push on auto-poll (push happens on save)
-      // Check timestamp before applying to avoid overwriting newer local data
-      try{
-        const r=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}/latest`,{headers:{'X-Master-Key':syncConfig.apiKey}});
-        if(!r.ok)return;
-        const j=await r.json(),rec=j.record||j;
-        // Only apply if cloud is newer than our last local save
-        const localTs=parseInt(localStorage.getItem('hpdc-local-ts')||'0');
-        if(rec._ts&&rec._ts>localTs&&rec.orders){
-          const c=await syncFromCloud();
-          if(c)render();
-        }
-      }catch(e){}
-    }
-  },90000);
-}
+function startAutoPoll(){if(syncTimer)clearInterval(syncTimer);if(!syncConfig.enabled)return;syncTimer=setInterval(async()=>{if(!document.hidden){const c=await syncFromCloud();if(c)render();}},90000);}
 function exportData(){const b=new Blob([JSON.stringify(getPayload(),null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='hdpc-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
 function exportCSV(){
   const rows=[['Date','Order #','Description','Revenue',...fieldConfig.filter(f=>f.active).map(f=>f.label),'Return label','Gross margin']];
@@ -601,7 +548,6 @@ function importData(){const i=document.createElement('input');i.type='file';i.ac
 
 // ── DATE HELPERS ──────────────────────────────────────────────────────────────
 function pd(s){if(!s)return new Date(2000,0,1);const p=s.split('/').map(Number);return p.length===3?new Date(p[2],p[0]-1,p[1]):new Date(new Date().getFullYear(),p[0]-1,p[1]);}
-function normDate(s){if(!s)return s;const d=pd(s.trim());if(isNaN(d))return s.trim();return(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();}
 function dateRanges(){
   const n=new Date(),y=n.getFullYear(),mo=n.getMonth(),da=n.getDate(),dow=n.getDay();
   const wkS=new Date(y,mo,da-(dow===0?6:dow-1));const wkE=new Date(wkS);wkE.setDate(wkS.getDate()+6);
@@ -625,7 +571,10 @@ function isItemOv(date,key){const ov=dailyOverrides[date];return!!(ov&&key in ov
 function hasAnyOv(date){const ov=dailyOverrides[date];return!!(ov&&Object.keys(ov).length);}
 function setDayItemRate(date,key,raw){if(!dailyOverrides[date])dailyOverrides[date]={};if(raw===''||raw===null)delete dailyOverrides[date][key];else dailyOverrides[date][key]=parseFloat(raw)||0;if(!Object.keys(dailyOverrides[date]).length)delete dailyOverrides[date];saveAll();refreshDayNums(date);}
 function resetDay(date){pushUndo();delete dailyOverrides[date];saveAll();render();}
-function getDayBurn(date){const period=getPeriod(date);let t=period.items.reduce((s,item)=>s+getDayItemRate(date,item.key),0);getActiveCx(date).forEach(cx=>{t+=getCxRate(date,cx.id);});return t;}
+function getDayBurnLegacy(date){const period=getPeriod(date);let t=period.items.reduce((s,item)=>s+getDayItemRate(date,item.key),0);getActiveCx(date).forEach(cx=>{t+=getCxRate(date,cx.id);});return t;}
+function getDayBurn(date){
+  return burnRates.length ? getEffectiveBurn(date) : getDayBurnLegacy(date);
+}
 
 // ── CUSTOM EXPENSES ───────────────────────────────────────────────────────────
 function getActiveCx(date){const d=pd(date);return customExpenses.filter(x=>{if(x.freq==='onetime')return false;const st=pd(x.startDate),en=x.endDate?pd(x.endDate):null;return st<=d&&(!en||en>=d);});}
@@ -663,15 +612,17 @@ function byDate(){const m={};orders.forEach(o=>{if(!m[o.date])m[o.date]=[];m[o.d
 function totals(){
   const rev=orders.reduce((s,o)=>s+n(o.revenue),0),vc_=orders.reduce((s,o)=>s+vc(o),0);
   const dated=byDate();
-  // Fixed costs must cover EVERY calendar day from first entry to last entry (not just days with orders)
+  // Walk every calendar day for accurate fixed cost total
   let fixed=customExpenses.filter(x=>x.freq==='onetime').reduce((s,x)=>s+n(x.amount),0);
   if(dated.length){
-    const firstD=pd(dated[0][0]);
-    const lastEntryD=pd(dated[dated.length-1][0]);
+    const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
+    const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
+    bizStart.setHours(0,0,0,0);
+    const lastEntryDate=pd(dated[dated.length-1][0]);
     const todayD=new Date();todayD.setHours(23,59,59);
-    const lastD=lastEntryD>todayD?lastEntryD:todayD;
-    const cur=new Date(firstD);cur.setHours(0,0,0,0);
-    while(cur<=lastD){
+    const lastDate=lastEntryDate>todayD?lastEntryDate:todayD;
+    const cur=new Date(bizStart);
+    while(cur<=lastDate){
       const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
       fixed+=getDayBurn(dstr);
       cur.setDate(cur.getDate()+1);
@@ -685,27 +636,10 @@ function ordersInRange(s,e){return orders.filter(o=>{const d=pd(o.date);return d
 function expensesInRange(s,e){return dailyExpenses.filter(x=>{const d=pd(x.date);return d>=s&&d<=e;});}
 
 // ── SUMMARY CALCS ─────────────────────────────────────────────────────────────
-function calcSummary(ro,re,rangeStart,rangeEnd){
+function calcSummary(ro,re){
   const dates=[...new Set(ro.map(o=>o.date))];
   const rev=ro.reduce((s,o)=>s+n(o.revenue),0),vc_=ro.reduce((s,o)=>s+vc(o),0);
-  // Fixed costs: walk every calendar day in the range, but never before the business start date
-  let fixed=0;
-  const allOrderDates=orders.map(o=>pd(o.date)).filter(d=>d);
-  const bizStart=allOrderDates.length?new Date(Math.min(...allOrderDates.map(d=>d.getTime()))):null;
-  if(rangeStart&&rangeEnd){
-    const cur=new Date(rangeStart);
-    // Clamp to business start — don't charge fixed costs before first ever order
-    if(bizStart&&cur<bizStart){cur.setTime(bizStart.getTime());}
-    cur.setHours(0,0,0,0);
-    const end=new Date(rangeEnd);end.setHours(23,59,59);
-    while(cur<=end){
-      const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
-      fixed+=getDayBurn(dstr);
-      cur.setDate(cur.getDate()+1);
-    }
-  } else {
-    fixed=dates.reduce((s,d)=>s+getDayBurn(d),0);
-  }
+  const fixed=dates.reduce((s,d)=>s+getDayBurn(d),0);
   const expTotal=re.reduce((s,x)=>s+n(x.amount),0);
   const net=rev-vc_-fixed-expTotal,margin=rev>0?(net/rev)*100:0;
   const vb={};fieldConfig.filter(f=>f.active).forEach(f=>{vb[f.id]={label:f.label,total:ro.reduce((s,o)=>s+n(o[f.id]||0),0)};});
@@ -713,6 +647,7 @@ function calcSummary(ro,re,rangeStart,rangeEnd){
   const fb={custom:{}};
   dates.forEach(d=>{const period=getPeriod(d);period.items.forEach(item=>{if(!fb[item.key])fb[item.key]={name:item.name,total:0};fb[item.key].total+=getDayItemRate(d,item.key);});getActiveCx(d).forEach(cx=>{if(!fb.custom[cx.id])fb.custom[cx.id]={name:cx.name,total:0};fb.custom[cx.id].total+=getCxRate(d,cx.id);});});
   let bestDay={date:'—',rev:0};dates.forEach(d=>{const dr=ro.filter(o=>o.date===d).reduce((s,o)=>s+n(o.revenue),0);if(dr>bestDay.rev)bestDay={date:d,rev:dr};});
+  // Top products by revenue
   const prodMap={};ro.forEach(o=>{const k=e(o.description.split(' ').slice(0,3).join(' '));if(!prodMap[k])prodMap[k]={desc:o.description,rev:0,count:0};prodMap[k].rev+=n(o.revenue);prodMap[k].count++;});
   const topProds=Object.values(prodMap).sort((a,b)=>b.rev-a.rev).slice(0,5);
   return{ro,dates,rev,vc_,fixed,expTotal,net,margin,avgOrder:ro.length?rev/ro.length:0,vb,fb,bestDay,orderCount:ro.length,dayCount:dates.length,topProds};
@@ -904,33 +839,28 @@ function dailyV(){
 
   let rnet=0;
   const allDated=byDate();
-  // Running net must include ALL calendar days (including gap days with no orders)
+  // Running net walks EVERY calendar day (not just order days) to charge burn on gap days
   const fullRnet={};
   let r=0;
   if(allDated.length){
-    // Build a map of days that have orders
     const ordMap={};
     allDated.forEach(([date,dayOrders])=>{ordMap[date]=dayOrders;});
-    // Iterate every calendar day from first entry to today
-    const firstDate=pd(allDated[0][0]);
-    // Loop through to the LATER of today or the last entry date (handles future-dated entries)
+    const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
+    const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
+    bizStart.setHours(0,0,0,0);
     const lastEntryDate=pd(allDated[allDated.length-1][0]);
-    const today=new Date();today.setHours(23,59,59);
-    const lastDate=lastEntryDate>today?lastEntryDate:today;
-    const cur=new Date(firstDate);
-    cur.setHours(0,0,0,0);
+    const todayD=new Date();todayD.setHours(23,59,59);
+    const lastDate=lastEntryDate>todayD?lastEntryDate:todayD;
+    const cur=new Date(bizStart);
     while(cur<=lastDate){
       const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
       const dayOrds=ordMap[dstr]||[];
       const dRev=dayOrds.reduce((s,o)=>s+n(o.revenue),0);
       const dVc=dayOrds.reduce((s,o)=>s+vc(o),0);
       r+=dRev-dVc-getDayBurn(dstr)-getDayExpTotal(dstr);
-      // Store for days that have entries (so the day blocks show correct running total)
       if(ordMap[dstr])fullRnet[dstr]=r;
       cur.setDate(cur.getDate()+1);
     }
-    // Also fill in the current running total for the display
-    // For the most recent entry day, make sure it reflects all gap days after it
   }
 
   const dayData=(isFiltered?filteredDated:allDated).map(([date,dayOrders])=>{
@@ -1005,9 +935,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
         +'</div>'
         // Order details
         +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order details</div>'
-        +(o.customerName?'<div style="font-size:12px;margin-bottom:4px;font-weight:600">👤 '+e(o.customerName)+'</div>':'')
-    +(o.technician?'<div style="font-size:12px;margin-bottom:4px;color:var(--blue)">🔧 '+e(o.technician)+' · '+(parseInt(o.quantity)||1)+' head'+(parseInt(o.quantity)>1?'s':'')+'</div>':'')
-    +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
+        +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
         +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:4px;color:var(--amber);font-weight:600">⚠ Core value at risk: '+$$(n(o.coreValue),2)+'</div>':'')
         +(o.returnSent?'<div style="font-size:12px;margin-bottom:4px;color:'+(isOrderReturned(o)?'var(--green)':'var(--amber)')+'">'+( isOrderReturned(o)?'✓ Core returned':'⚑ Core return pending')+'</div>':'')
         +(tNums.length?'<div style="font-size:10px;color:var(--text3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;font-weight:600">Tracking</div>'+tNums.map(t=>'<div style="font-family:monospace;font-size:11px;color:var(--text2);margin-bottom:2px">'+e(t)+'</div>').join(''):'')
@@ -1017,7 +945,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
     }
     return '<div class="ord-row'+(lowM?' low-margin':'') +'" style="cursor:pointer" onclick="toggleOrdExpand(\''+oid+'\')">'+
       '<span class="ord-num">#'+e(o.orderNum)+'</span>'
-      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+(o.technician?' <span style="font-size:10px;color:var(--blue)">🔧'+e(o.technician)+'</span>':'')+'</span>'
+      +'<span class="ord-desc">'+e(o.description)+'</span>'
       +'<span class="ord-rev">'+$$(n(o.revenue),2)+'</span>'
       +'<span class="ord-vc cr">−'+$$(vc(o),2)+'</span>'
       +'<span class="ord-gp '+cc(gp(o))+'">'+$$(gp(o),2)+' <span style="font-size:10px;opacity:.7">'+gpPct(o).toFixed(0)+'%</span></span>'
@@ -1032,17 +960,18 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
 
 
   const dayExps=getDayExpenses(date);
-
-  const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
-  const addForm=addingExpDate===date?`<div class="exp-add-row">
-    <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
-    <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
-    <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
-    <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
-    <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
-  </div>`:`<div style="padding:8px 16px"><button class="btn-g" style="font-size:12px;padding:6px 14px" onclick="event.stopPropagation();openAddExp('${date}')">+ Add expense</button></div>`;
-  const expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
-
+  let expSection='';
+  if(dayExps.length||addingExpDate===date){
+    const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
+    const addForm=addingExpDate===date?`<div class="exp-add-row">
+      <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
+      <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
+      <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
+      <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
+      <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
+    </div>`:`<div style="padding:6px 16px"><button class="btn-s" onclick="event.stopPropagation();openAddExp('${date}')">+ one-time expense</button></div>`;
+    expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
+  }
   const period=getPeriod(date);
   const coreInputs=period.items.map(item=>`<div class="fc-field">
     <span class="fc-field-lbl" title="${item.name}">${e(item.name)}</span>
@@ -1066,15 +995,13 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
       </div>
     </div>
     ${isOpen?`
-    <div style="padding:6px 14px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px"><button class="btn-p" style="font-size:12px;padding:5px 14px" onclick="event.stopPropagation();addForDate('${date}')">+ New order</button><span style="font-size:11px;color:var(--text3)">Date pre-fills as ${date} — change it in the form if needed</span></div>
     <div class="day-orders">${ordHdr}${ordRows}</div>
     ${expSection}
     <div class="day-fc">
       <span class="fc-section-lbl">Fixed</span>
-      <div class="fc-fields">${coreInputs}${cxInputs}</div>
-      <div class="fc-right">
+      <span style="font-size:12px;color:var(--text3);margin-left:8px">${$$(dBurn,2)}/day</span>
+      <div class="fc-right" style="margin-left:auto">
         <div><span class="fc-total-lbl">Total</span><span class="fc-total-val" id="dburn-${s}">${$$(dBurn,2)}</span></div>
-        <button class="fc-reset" id="dres-${s}" style="display:${hasOv?'':' none'}" onclick="event.stopPropagation();resetDay('${date}')">↺ reset</button>
       </div>
     </div>`:''}
   </div>`;
@@ -1082,6 +1009,8 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
 function addForDate(d){entryDatePreset=d;sv('entry');}
 
 // ── SUMMARY VIEW ──────────────────────────────────────────────────────────────
+let summaryHistTab='none';
+
 function productionV(){
   const allOrds=orders.filter(o=>o.date);
   function qty(o){return Math.max(1,parseInt(o.quantity)||1);}
@@ -1090,62 +1019,14 @@ function productionV(){
   const startOfMonth=new Date(now.getFullYear(),now.getMonth(),1);
   const startOfYear=new Date(now.getFullYear(),0,1);
   function inRange(o,from,to){const d=pd(o.date);return d>=from&&d<=(to||now);}
-  const todayStr=(now.getMonth()+1)+'/'+(now.getDate())+'/'+now.getFullYear();
   function qtySumRange(ords,from,to){return ords.filter(o=>inRange(o,from,to)).reduce((s,o)=>s+qty(o),0);}
-
-  const totalToday=allOrds.filter(o=>normDate(o.date)===normDate(todayStr)).reduce((s,o)=>s+qty(o),0);
+  const todayStr=(now.getMonth()+1)+'/'+(now.getDate())+'/'+now.getFullYear();
+  const totalToday=allOrds.filter(o=>o.date===todayStr||(pd(o.date)&&pd(o.date).toDateString()===now.toDateString())).reduce((s,o)=>s+qty(o),0);
   const totalWeek=qtySumRange(allOrds,startOfWeek);
   const totalMonth=qtySumRange(allOrds,startOfMonth);
   const totalYear=qtySumRange(allOrds,startOfYear);
   const totalAll=allOrds.reduce((s,o)=>s+qty(o),0);
-
-  // ── History builder ──────────────────────────────────────────────────────
-  function getLast(n,unit){
-    const result=[];
-    for(let i=0;i<n;i++){
-      let start,end,label,sub;
-      if(unit==='week'){
-        const base=new Date(now);base.setDate(now.getDate()-now.getDay()-(i*7));
-        start=new Date(base);start.setHours(0,0,0,0);
-        end=new Date(start);end.setDate(start.getDate()+6);end.setHours(23,59,59);
-        const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        label='Wk '+mn[start.getMonth()]+' '+(start.getDate());
-        sub=(start.getMonth()+1)+'/'+(start.getDate())+' – '+(end.getMonth()+1)+'/'+(end.getDate());
-      } else if(unit==='month'){
-        const d=new Date(now.getFullYear(),now.getMonth()-i,1);
-        start=new Date(d.getFullYear(),d.getMonth(),1);
-        end=new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59);
-        const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-        label=mn[d.getMonth()]+' '+d.getFullYear();sub='';
-      } else {
-        const yr=now.getFullYear()-i;
-        start=new Date(yr,0,1);end=new Date(yr,11,31,23,59,59);
-        label=String(yr);sub='';
-      }
-      const ords=allOrds.filter(o=>inRange(o,start,end));
-      const heads=ords.reduce((s,o)=>s+qty(o),0);
-      // Per-tech breakdown
-      const techBreak={};
-      ords.forEach(o=>{const t=(o.technician||'').trim()||'Unassigned';techBreak[t]=(techBreak[t]||0)+qty(o);});
-      result.push({label,sub,heads,orders:ords.length,techBreak,start,end});
-    }
-    return result;
-  }
-
-  // ── State for which history view is open ──────────────────────────────────
-  if(typeof prodHistTab==='undefined')window.prodHistTab='week';
-  if(typeof prodSelectedTech==='undefined')window.prodSelectedTech=null;
-  const hTab=window.prodHistTab||'week';
-  const selectedTech=window.prodSelectedTech;
-  const periods=getLast(hTab==='year'?5:12,hTab);
-  const maxHeads=Math.max(...periods.map(p=>p.heads),1);
-
-  function tabBtn(lbl,tab){
-    const on=hTab===tab;
-    return '<button data-tab="'+tab+'" onclick="window.prodHistTab=this.dataset.tab;document.getElementById(\'view\').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 14px;font-size:12px;font-weight:600;border-radius:var(--r);border:1px solid '+(on?'var(--red)':'var(--border2)')+';background:'+(on?'rgba(204,0,0,.15)':'transparent')+';color:'+(on?'var(--red)':'var(--text2)')+';cursor:pointer;font-family:var(--fh);text-transform:uppercase;letter-spacing:.4px">'+lbl+'</button>';
-  }
-
-  // ── Technician totals (all time) ──────────────────────────────────────────
+  // Technician totals
   const techs={};
   allOrds.forEach(o=>{
     const t=(o.technician||'').trim()||'Unassigned';
@@ -1157,14 +1038,58 @@ function productionV(){
     if(inRange(o,startOfYear))techs[t].year+=q;
   });
   const techList=Object.entries(techs).sort((a,b)=>b[1].total-a[1].total);
-
+  // Per-day bar chart (last 30 days)
+  const dayMap={};
+  allOrds.forEach(o=>{const d=o.date;if(!dayMap[d])dayMap[d]=0;dayMap[d]+=qty(o);});
+  const sortedDays=Object.entries(dayMap).sort(([a],[b])=>pd(a)-pd(b)).slice(-30);
+  const maxDay=Math.max(...sortedDays.map(([,v])=>v),1);
+  // History periods (weekly/monthly/annually)
+  if(typeof prodHistTab==='undefined')window.prodHistTab='week';
+  const hTab=window.prodHistTab||'week';
+  if(typeof prodSelectedTech==='undefined')window.prodSelectedTech=null;
+  const selectedTech=window.prodSelectedTech;
+  function getLast(cnt,unit){
+    const result=[];
+    const allDates=allOrds.map(o=>pd(o.date)).filter(Boolean);
+    const bizStart=allDates.length?new Date(Math.min(...allDates.map(d=>d.getTime()))):now;
+    bizStart.setHours(0,0,0,0);
+    for(let i=0;i<cnt;i++){
+      let start,end,label;
+      if(unit==='week'){
+        const base=new Date(now);base.setDate(now.getDate()-now.getDay()-(i*7));
+        start=new Date(base);start.setDate(base.getDate()-base.getDay());start.setHours(0,0,0,0);
+        end=new Date(start);end.setDate(start.getDate()+6);end.setHours(23,59,59);
+        label='Wk '+(start.getMonth()+1)+'/'+start.getDate();
+      } else if(unit==='month'){
+        const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+        start=new Date(d.getFullYear(),d.getMonth(),1);
+        end=new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59);
+        const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        label=mn[d.getMonth()]+' '+d.getFullYear();
+      } else {
+        const yr=now.getFullYear()-i;
+        start=new Date(yr,0,1);end=new Date(yr,11,31,23,59,59);
+        label=String(yr);
+      }
+      if(end<bizStart)continue;
+      const ords=allOrds.filter(o=>inRange(o,start,end));
+      const heads=ords.reduce((s,o)=>s+qty(o),0);
+      const techBreak={};
+      ords.forEach(o=>{const t=(o.technician||'').trim()||'Unassigned';techBreak[t]=(techBreak[t]||0)+qty(o);});
+      result.push({label,heads,orders:ords.length,techBreak,start,end});
+    }
+    return result;
+  }
+  const periods=getLast(hTab==='year'?5:12,hTab);
+  const maxHeads=Math.max(...periods.map(p=>p.heads),1);
+  function tabBtn(lbl,tab){
+    const on=hTab===tab;
+    return '<button data-tab="'+tab+'" onclick="window.prodHistTab=this.dataset.tab;document.getElementById(\'view\').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 14px;font-size:12px;font-weight:600;border-radius:var(--r);border:1px solid '+(on?'var(--red)':'var(--border2)')+';background:'+(on?'rgba(204,0,0,.15)':'transparent')+';color:'+(on?'var(--red)':'var(--text2)')+';cursor:pointer;font-family:var(--fh);text-transform:uppercase;letter-spacing:.4px">'+lbl+'</button>';
+  }
   function statBox(lbl,val,sub){
     return '<div style="padding:14px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);flex:1;min-width:110px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:4px;font-weight:600">'+lbl+'</div><div style="font-size:26px;font-weight:800;font-family:var(--fh)">'+val+'</div>'+(sub?'<div style="font-size:10px;color:var(--text3);margin-top:2px">'+sub+'</div>':'')+'</div>';
   }
-
   let html='<h2 style="font-family:var(--fh);font-size:22px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px">Production</h2>';
-
-  // Stat cards
   html+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">'
     +statBox('Today',totalToday,'heads')
     +statBox('This week',totalWeek,'heads')
@@ -1172,130 +1097,107 @@ function productionV(){
     +statBox('This year',totalYear,'heads')
     +statBox('All time',totalAll,'total heads')
     +'</div>';
-
-  // ── History table ─────────────────────────────────────────────────────────
+  // History table
   html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;margin-bottom:18px">'
-    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">'
     +'<span style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-right:4px">History:</span>'
     +tabBtn('Weekly','week')+tabBtn('Monthly','month')+tabBtn('Annually','year')
     +'</div>';
-
-  // Header
-  const techCols=techList.slice(0,4).map(([n])=>n); // show up to 4 techs as columns
-  const gridCols='140px 1fr 60px 60px'+techCols.map(()=>' 70px').join('');
-  html+='<div style="display:grid;grid-template-columns:'+gridCols+';font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:5px 10px;background:var(--bg3);border-radius:6px 6px 0 0;border:1px solid var(--border);gap:4px;margin-bottom:1px">'
+  const techCols=techList.slice(0,4).map(([nm])=>nm);
+  const gridCols='120px 1fr 60px 60px'+techCols.map(()=>' 65px').join('');
+  html+='<div style="display:grid;grid-template-columns:'+gridCols+';font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:5px 10px;background:var(--bg3);border-radius:6px 6px 0 0;border:1px solid var(--border);gap:4px">'
     +'<span>Period</span><span>Output</span><span style="text-align:right">Heads</span><span style="text-align:right">Orders</span>'
-    +techCols.map(n=>'<span style="text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+e(n)+'">'+e(n.split(' ')[0])+'</span>').join('')
+    +techCols.map(nm=>'<span style="text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+e(nm.split(' ')[0])+'</span>').join('')
     +'</div>';
-
   periods.forEach((p,idx)=>{
     const pct=Math.round(p.heads/maxHeads*100);
-    const isThis=idx===0;
-    html+='<div style="display:grid;grid-template-columns:'+gridCols+';padding:7px 10px;border:1px solid var(--border);border-top:none;'+(isThis?'background:rgba(204,0,0,.05)':idx%2?'background:rgba(255,255,255,.01)':'')+';align-items:center;gap:4px;font-size:12px">'
-      +'<div><div style="font-weight:'+(isThis?'700':'500')+'">'+p.label+(isThis?' <span style="font-size:9px;background:rgba(204,0,0,.15);color:var(--red);border-radius:3px;padding:1px 5px;font-weight:700">NOW</span>':'')+'</div>'+(p.sub?'<div style="font-size:10px;color:var(--text3)">'+p.sub+'</div>':'')+'</div>'
-      +'<div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden"><div style="height:100%;background:'+(isThis?'var(--red)':'#555')+';border-radius:4px;width:'+pct+'%;min-width:'+(p.heads>0?3:0)+'px;transition:width .3s"></div></div></div>'
-      +'<span style="text-align:right;font-weight:700;color:'+(isThis?'var(--red)':'var(--text)')+'">'+p.heads+'</span>'
+    const isNow=idx===0;
+    html+='<div style="display:grid;grid-template-columns:'+gridCols+';padding:7px 10px;border:1px solid var(--border);border-top:none;'+(isNow?'background:rgba(204,0,0,.05)':idx%2?'background:rgba(255,255,255,.01)':'')+';align-items:center;gap:4px;font-size:12px">'
+      +'<div style="font-weight:'+(isNow?'700':'500')+'">'+p.label+(isNow?' <span style="font-size:9px;background:rgba(204,0,0,.15);color:var(--red);border-radius:3px;padding:1px 5px;font-weight:700">NOW</span>':'')+'</div>'
+      +'<div style="display:flex;align-items:center"><div style="flex:1;height:8px;background:var(--bg4);border-radius:4px;overflow:hidden"><div style="height:100%;background:'+(isNow?'var(--red)':'#555')+';border-radius:4px;width:'+pct+'%;min-width:'+(p.heads>0?3:0)+'px"></div></div></div>'
+      +'<span style="text-align:right;font-weight:700;color:'+(isNow?'var(--red)':'var(--text)')+'">'+p.heads+'</span>'
       +'<span style="text-align:right;color:var(--text3)">'+p.orders+'</span>'
-      +techCols.map(n=>'<span style="text-align:right;font-weight:600;color:var(--blue)">'+(p.techBreak[n]||'—')+'</span>').join('')
+      +techCols.map(nm=>'<span style="text-align:right;color:var(--blue);font-weight:600">'+(p.techBreak[nm]||'—')+'</span>').join('')
       +'</div>';
   });
   html+='</div>';
-
-  // ── Technician leaderboard ────────────────────────────────────────────────
+  // Technician leaderboard
   if(techList.length){
-    html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:18px">'
+    html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden">'
       +'<div style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Technician leaderboard</div>'
       +'<div style="display:grid;grid-template-columns:1fr 65px 65px 65px 75px 60px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:6px 14px;background:var(--bg3);border-bottom:1px solid var(--border)">'
       +'<span>Technician</span><span style="text-align:right">Week</span><span style="text-align:right">Month</span><span style="text-align:right">Year</span><span style="text-align:right">All time</span><span style="text-align:right">Orders</span></div>'
-      +techList.map(([name,t],idx)=>{
+      +techList.map(([nm,t],idx)=>{
         const pct=totalAll?Math.round(t.total/totalAll*100):0;
-        const isSel=selectedTech===name;
-        const encodedName=encodeURIComponent(name);
-        return '<div data-tech="'+encodedName+'" onclick="selectTech(this.dataset.tech)" style="display:grid;grid-template-columns:1fr 65px 65px 65px 75px 60px;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center;font-size:13px;cursor:pointer;'+(isSel?'background:rgba(204,0,0,.08);border-left:3px solid var(--red);':idx%2?'background:rgba(255,255,255,.02)':'')+'">'
-          +'<div><div style="display:flex;align-items:center;gap:8px"><div style="font-weight:700">'+e(name)+'</div>'+(isSel?'<span style="font-size:10px;background:rgba(204,0,0,.15);color:var(--red);border-radius:3px;padding:1px 6px;font-weight:700">viewing ↓</span>':'<span style="font-size:10px;color:var(--text3)">click to expand</span>')+'</div><div style="height:4px;background:var(--bg4);border-radius:2px;margin-top:4px;max-width:140px"><div style="height:100%;background:'+(isSel?'var(--red)':'var(--red)')+';border-radius:2px;width:'+pct+'%"></div></div></div>'
+        const isSel=selectedTech===nm;
+        return '<div data-tech="'+encodeURIComponent(nm)+'" onclick="selectTech(this.dataset.tech)" style="cursor:pointer;'+(isSel?'background:rgba(204,0,0,.06);border-left:3px solid var(--red);':idx%2?'background:rgba(255,255,255,.02)':'')+'">'
+          +'<div style="display:grid;grid-template-columns:1fr 65px 65px 65px 75px 60px;padding:8px 14px;align-items:center;font-size:13px">'
+          +'<div><div style="font-weight:600">'+e(nm)+(isSel?' <span style="font-size:9px;color:var(--red)">▾</span>':'')+'</div><div style="height:4px;background:var(--bg4);border-radius:2px;margin-top:4px;max-width:140px"><div style="height:100%;background:var(--red);border-radius:2px;width:'+pct+'%"></div></div></div>'
           +'<span style="text-align:right;font-weight:600">'+t.week+'</span>'
           +'<span style="text-align:right;font-weight:600">'+t.month+'</span>'
           +'<span style="text-align:right;font-weight:600">'+t.year+'</span>'
-          +'<span style="text-align:right;font-weight:700;font-size:14px;color:var(--text)">'+t.total+'</span>'
+          +'<span style="text-align:right;font-weight:700;font-size:14px">'+t.total+'</span>'
           +'<span style="text-align:right;color:var(--text3)">'+t.orders+'</span>'
           +'</div>'
-          // ── Inline tech detail panel ──
-          +(isSel?buildTechDetail(name,allOrds,qty,getLast,hTab):'');
+          +(isSel?buildTechDetail(nm,allOrds,qty,getLast,hTab):'')
+          +'</div>';
       }).join('')
       +'</div>';
   }
-
   return html;
 }
-
-function selectTech(encodedName){
-  const name=decodeURIComponent(encodedName);
-  window.prodSelectedTech=window.prodSelectedTech===name?null:name;
-  document.getElementById('view').innerHTML=buildView();
-  updateBadge();updateSummary();
+function setSumHistTab(tab){summaryHistTab=tab;document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();}
+function selectTech(enc){
+  const nm=decodeURIComponent(enc);
+  window.prodSelectedTech=window.prodSelectedTech===nm?null:nm;
+  document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();
 }
 function buildTechDetail(techName,allOrds,qty,getLast,hTab){
   const techOrds=allOrds.filter(o=>(o.technician||'').trim()===techName);
-  if(!techOrds.length)return '<div style="grid-column:1/-1;padding:12px 14px;color:var(--text3);font-size:12px">No orders yet.</div>';
-
-  // History table for this tech
-  const periods=getLast(hTab==='year'?5:12,hTab);
-  const maxH=Math.max(...periods.map(p=>{
-    const start=p.start,end=p.end;
-    return techOrds.filter(o=>{const d=pd(o.date);return d>=start&&d<=end;}).reduce((s,o)=>s+qty(o),0);
-  }),1);
-
-  let html='<div style="grid-column:1/-1;background:rgba(0,0,0,.2);border-top:1px solid var(--border);padding:12px 14px">';
-
-  // Stat row for this tech
+  if(!techOrds.length)return '<div style="padding:12px 14px;color:var(--text3);font-size:12px">No orders yet.</div>';
   const now=new Date();
   const startOfWeek=new Date(now);startOfWeek.setDate(now.getDate()-now.getDay());startOfWeek.setHours(0,0,0,0);
   const startOfMonth=new Date(now.getFullYear(),now.getMonth(),1);
   const startOfYear=new Date(now.getFullYear(),0,1);
-  function inR(o,from,to){const d=pd(o.date);return d>=from&&d<=(to||now);}
+  function inR(o,from){const d=pd(o.date);return d>=from&&d<=now;}
   const tw=techOrds.filter(o=>inR(o,startOfWeek)).reduce((s,o)=>s+qty(o),0);
   const tm=techOrds.filter(o=>inR(o,startOfMonth)).reduce((s,o)=>s+qty(o),0);
   const ty=techOrds.filter(o=>inR(o,startOfYear)).reduce((s,o)=>s+qty(o),0);
   const ta=techOrds.reduce((s,o)=>s+qty(o),0);
-
+  const periods=getLast(hTab==='year'?5:12,hTab);
+  const maxH=Math.max(...periods.map(p=>techOrds.filter(o=>{const d=pd(o.date);return d>=p.start&&d<=p.end;}).reduce((s,o)=>s+qty(o),0)),1);
+  let html='<div style="background:rgba(0,0,0,.2);border-top:1px solid var(--border);padding:12px 14px">';
   html+='<div style="font-size:11px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px">'+e(techName)+' — Individual history</div>';
   html+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
-  [['This week',tw],['This month',tm],['This year',ty],['All time',ta]].forEach(([l,v])=>{
+  [['Week',tw],['Month',tm],['Year',ty],['All time',ta]].forEach(([l,v])=>{
     html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;flex:1;min-width:80px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">'+l+'</div><div style="font-size:20px;font-weight:800;font-family:var(--fh)">'+v+'</div></div>';
   });
   html+='</div>';
-
-  // History bars
-  html+='<div style="margin-bottom:12px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px">Output per period ('+hTab+')</div>';
-  html+='<div style="display:flex;flex-direction:column;gap:3px">';
+  html+='<div style="margin-bottom:12px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px">Output per period</div>';
   periods.forEach((p,i)=>{
     const heads=techOrds.filter(o=>{const d=pd(o.date);return d>=p.start&&d<=p.end;}).reduce((s,o)=>s+qty(o),0);
     const pct=Math.round(heads/maxH*100);
-    const isNow=i===0;
-    html+='<div style="display:flex;align-items:center;gap:8px;font-size:11px">'
-      +'<span style="width:70px;flex-shrink:0;font-weight:'+(isNow?'700':'400')+';color:'+(isNow?'var(--text)':'var(--text2)')+'">'+p.label+'</span>'
-      +'<div style="flex:1;height:14px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;background:'+(isNow?'var(--red)':'#555')+';border-radius:3px;width:'+pct+'%;min-width:'+(heads>0?3:0)+'px"></div></div>'
-      +'<span style="width:28px;text-align:right;font-weight:700;color:'+(isNow?'var(--red)':'var(--text)')+'">'+heads+'</span>'
+    html+='<div style="display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:3px">'
+      +'<span style="width:68px;flex-shrink:0;font-weight:'+(i===0?'700':'400')+';color:'+(i===0?'var(--text)':'var(--text2)')+'">'+p.label+'</span>'
+      +'<div style="flex:1;height:14px;background:var(--bg4);border-radius:3px;overflow:hidden"><div style="height:100%;background:'+(i===0?'var(--red)':'#555')+';border-radius:3px;width:'+pct+'%;min-width:'+(heads>0?3:0)+'px"></div></div>'
+      +'<span style="width:28px;text-align:right;font-weight:700;color:'+(i===0?'var(--red)':'var(--text)')+'">'+heads+'</span>'
       +'</div>';
   });
-  html+='</div></div>';
-
-  // Recent orders table
-  const recent=techOrds.sort((a,b)=>pd(b.date)-pd(a.date)).slice(0,15);
+  html+='</div>';
+  const recent=techOrds.sort((a,b)=>pd(b.date)-pd(a.date)).slice(0,10);
   html+='<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;margin-bottom:6px">Recent orders</div>';
   html+='<div style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden">';
   recent.forEach((o,i)=>{
     html+='<div style="display:flex;align-items:center;gap:8px;padding:5px 10px;border-bottom:1px solid var(--border);font-size:11px;'+(i%2?'background:rgba(255,255,255,.02)':'')+'">'
-      +'<span style="color:var(--text3);flex-shrink:0;width:48px">'+o.date+'</span>'
-      +'<span style="color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">#'+e(o.orderNum)+' '+e(o.description)+'</span>'
+      +'<span style="color:var(--text3);flex-shrink:0;width:52px">'+o.date+'</span>'
+      +'<span style="color:var(--text2);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">#'+e(o.orderNum||'')+(o.description?' '+e(o.description):'')+'</span>'
       +'<span style="color:var(--amber);font-weight:700;flex-shrink:0">'+qty(o)+' head'+(qty(o)!==1?'s':'')+'</span>'
       +'</div>';
   });
-  html+='</div>';
-
-  html+='</div>';
+  html+='</div></div>';
   return html;
 }
+
 function summaryV(){
   if(!orders.length)return`<div class="empty"><h3>No data yet</h3></div>`;
   const ranges=dateRanges();
@@ -1314,110 +1216,85 @@ function summaryV(){
       <div class="be-metric"><div class="be-lbl">Revenue needed</div><div class="be-val cg">${revNeeded>0?$$(b/(avgGP/avgRev)):'—'}</div></div>
     </div>
   </div>`;
-  // ── History periods ──────────────────────────────────────────────────────
-  // Build last N weeks
-  function getLast(cnt, unit){
+  // ── History toggle ──────────────────────────────────────────────────────────
+  const histTab=summaryHistTab||'none';
+  function getLast(cnt,unit){
     const result=[];
-    const now=new Date();now.setHours(23,59,59);
-    // Business inception date — first ever order
     const allDates=orders.map(o=>pd(o.date)).filter(Boolean);
-    const bizStart=allDates.length?new Date(Math.min(...allDates.map(d=>d.getTime()))):now;
+    const bizStart=allDates.length?new Date(Math.min(...allDates.map(d=>d.getTime()))):new Date();
     bizStart.setHours(0,0,0,0);
+    const nowD=new Date();nowD.setHours(23,59,59);
     for(let i=0;i<cnt;i++){
       let start,end,label;
       if(unit==='week'){
-        const base=new Date(now);base.setDate(now.getDate()-now.getDay()-(i*7));
+        const base=new Date(nowD);base.setDate(nowD.getDate()-nowD.getDay()-(i*7));
         start=new Date(base);start.setDate(base.getDate()-base.getDay());start.setHours(0,0,0,0);
         end=new Date(start);end.setDate(start.getDate()+6);end.setHours(23,59,59);
-        label='Wk of '+(start.getMonth()+1)+'/'+start.getDate();
+        label='Wk '+(start.getMonth()+1)+'/'+start.getDate();
       } else if(unit==='month'){
-        const d=new Date(now.getFullYear(),now.getMonth()-i,1);
+        const d=new Date(nowD.getFullYear(),nowD.getMonth()-i,1);
         start=new Date(d.getFullYear(),d.getMonth(),1);
         end=new Date(d.getFullYear(),d.getMonth()+1,0,23,59,59);
         const mn=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         label=mn[d.getMonth()]+' '+d.getFullYear();
       } else {
-        const yr=now.getFullYear()-i;
+        const yr=nowD.getFullYear()-i;
         start=new Date(yr,0,1);end=new Date(yr,11,31,23,59,59);
         label=String(yr);
       }
-      // Skip periods entirely before business started
       if(end<bizStart)continue;
-      // Clamp start to biz inception, clamp end to today (no future fixed costs)
-      const effectiveStart=start<bizStart?new Date(bizStart):new Date(start);
-      const effectiveEnd=end>now?new Date(now):new Date(end);
-      effectiveStart.setHours(0,0,0,0);
-      effectiveEnd.setHours(23,59,59);
+      const effStart=start<bizStart?new Date(bizStart):new Date(start);
+      const effEnd=end>nowD?new Date(nowD):new Date(end);
       const ro=ordersInRange(start,end),re=expensesInRange(start,end);
       const rev=ro.reduce((s,o)=>s+n(o.revenue),0);
       const varC=ro.reduce((s,o)=>s+vc(o),0);
-      // Walk each actual day to calculate fixed costs correctly
-      let fixC=0;
-      const cur=new Date(effectiveStart);
-      while(cur<=effectiveEnd){
-        const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
-        fixC+=getDayBurn(dstr);
-        cur.setDate(cur.getDate()+1);
-      }
+      let fixC=0;const cur=new Date(effStart);cur.setHours(0,0,0,0);
+      while(cur<=effEnd){const ds=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();fixC+=getDayBurn(ds);cur.setDate(cur.getDate()+1);}
       const expC=re.reduce((s,x)=>s+n(x.amount),0);
       const net=rev-varC-fixC-expC;
-      result.push({label,rev,varC,fixC,expC,net,orders:ro.length,start,end});
+      result.push({label,rev,varC,fixC,net,orders:ro.length});
     }
     return result;
   }
-
-  const histTab=typeof summaryHistTab!=='undefined'?summaryHistTab:'none';
-  const weeks=getLast(12,'week');
-  const months=getLast(12,'month');
-  const years=getLast(5,'year');
-
-  function histBtn(lbl,tab){
+  function hBtn(lbl,tab){
     const on=histTab===tab;
-    return `<button onclick="summaryHistTab='${tab}';document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 14px;font-size:12px;font-weight:600;border-radius:var(--r);border:1px solid ${on?'var(--red)':'var(--border2)'};background:${on?'rgba(204,0,0,.15)':'transparent'};color:${on?'var(--red)':'var(--text2)'};cursor:pointer;font-family:var(--fh);text-transform:uppercase;letter-spacing:.4px">${lbl}</button>`;
+    return '<button data-tab="'+tab+'" onclick="setSumHistTab(this.dataset.tab)" style="padding:5px 14px;font-size:12px;font-weight:600;border-radius:var(--r);border:1px solid '+(on?'var(--red)':'var(--border2)')+';background:'+(on?'rgba(204,0,0,.15)':'transparent')+';color:'+(on?'var(--red)':'var(--text2)')+';cursor:pointer;font-family:var(--fh);text-transform:uppercase;letter-spacing:.4px">'+lbl+'</button>';
   }
-
-  function histTable(periods){
+  function hTable(periods){
     const maxRev=Math.max(...periods.map(p=>p.rev),1);
-    return `<div style="border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-top:10px">
-      <div style="display:grid;grid-template-columns:90px 1fr 90px 90px 90px 90px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:6px 14px;background:var(--bg3);border-bottom:1px solid var(--border);gap:4px">
-        <span>Period</span><span>Revenue bar</span><span style="text-align:right">Revenue</span><span style="text-align:right">Var costs</span><span style="text-align:right">Net</span><span style="text-align:right">Orders</span>
-      </div>
-      ${periods.map(p=>`<div style="display:grid;grid-template-columns:90px 1fr 90px 90px 90px 90px;padding:7px 14px;border-bottom:1px solid var(--border);align-items:center;gap:4px;font-size:12px">
-        <span style="font-weight:600;font-size:11px">${p.label}</span>
-        <div style="height:6px;background:var(--bg4);border-radius:3px"><div style="height:100%;background:${p.net>=0?'var(--green)':'#f87171'};border-radius:3px;width:${Math.round(p.rev/maxRev*100)}%;min-width:${p.rev>0?2:0}px"></div></div>
-        <span style="text-align:right;font-weight:600;color:var(--green)">${p.rev>0?$$(p.rev,0):'—'}</span>
-        <span style="text-align:right;color:#f87171">${p.varC>0?'−'+$$(p.varC,0):'—'}</span>
-        <span style="text-align:right;font-weight:700;color:${p.net>=0?'var(--green)':'#f87171'}">${p.rev>0?(p.net>=0?'+':'')+$$(p.net,0):'—'}</span>
-        <span style="text-align:right;color:var(--text3)">${p.orders}</span>
-      </div>`).join('')}
-    </div>`;
+    return '<div style="border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-top:10px">'
+      +'<div style="display:grid;grid-template-columns:90px 1fr 90px 90px 90px 70px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;padding:6px 14px;background:var(--bg3);border-bottom:1px solid var(--border);gap:4px">'
+      +'<span>Period</span><span>Revenue bar</span><span style="text-align:right">Revenue</span><span style="text-align:right">Var costs</span><span style="text-align:right">Net</span><span style="text-align:right">Orders</span></div>'
+      +periods.map(p=>'<div style="display:grid;grid-template-columns:90px 1fr 90px 90px 90px 70px;padding:7px 14px;border-bottom:1px solid var(--border);align-items:center;gap:4px;font-size:12px">'
+        +'<span style="font-weight:600;font-size:11px">'+p.label+'</span>'
+        +'<div style="height:6px;background:var(--bg4);border-radius:3px"><div style="height:100%;background:'+(p.net>=0?'var(--green)':'#f87171')+';border-radius:3px;width:'+Math.round(p.rev/maxRev*100)+'%;min-width:'+(p.rev>0?2:0)+'px"></div></div>'
+        +'<span style="text-align:right;font-weight:600;color:var(--green)">'+(p.rev>0?$$(p.rev,0):'—')+'</span>'
+        +'<span style="text-align:right;color:#f87171">'+(p.varC>0?'−'+$$(p.varC,0):'—')+'</span>'
+        +'<span style="text-align:right;font-weight:700;color:'+(p.net>=0?'var(--green)':'#f87171')+'">'+(p.rev>0?(p.net>=0?'+':'')+$$(p.net,0):'—')+'</span>'
+        +'<span style="text-align:right;color:var(--text3)">'+p.orders+'</span>'
+        +'</div>').join('')
+      +'</div>';
   }
-
   let histHtml='';
-  if(histTab==='week') histHtml=histTable(weeks);
-  else if(histTab==='month') histHtml=histTable(months);
-  else if(histTab==='year') histHtml=histTable(years);
-
+  if(histTab==='week')histHtml=hTable(getLast(12,'week'));
+  else if(histTab==='month')histHtml=hTable(getLast(12,'month'));
+  else if(histTab==='year')histHtml=hTable(getLast(5,'year'));
   const histSection=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px 16px;margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:${histTab!=='none'?'10':'0'}px">
       <span style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-right:4px">History:</span>
-      ${histBtn('Weekly','week')}
-      ${histBtn('Monthly','month')}
-      ${histBtn('Annually','year')}
-      ${histTab!=='none'?'<button data-tab="none" onclick="summaryHistTab=this.dataset.tab;document.getElementById(\'view\').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 10px;font-size:11px;background:transparent;border:1px solid var(--border);border-radius:var(--r);color:var(--text3);cursor:pointer">✕</button>':''}
+      ${hBtn('Weekly','week')}${hBtn('Monthly','month')}${hBtn('Annually','year')}
+      ${histTab!=='none'?'<button data-tab="none" onclick="setSumHistTab(this.dataset.tab)" style="padding:5px 10px;font-size:11px;background:transparent;border:1px solid var(--border);border-radius:var(--r);color:var(--text3);cursor:pointer">✕</button>':''}
     </div>
     ${histHtml}
   </div>`;
-
-  return beHtml+histSection+`<div class="sum-cards">${['today','week','month','year'].map(k=>{const r=ranges[k];return buildSumCard(r,ordersInRange(r.start,r.end),expensesInRange(r.start,r.end));}).join('')}</div>`;
+  return beHtml+histSection+`<div class="sum-cards">${['today','week','month','year'].map(k=>{const r=ranges[k];return buildSumCard(r,ordersInRange(r.start,r.end),expensesInRange(r.start,r.end),r.start,r.end);}).join('')}</div>`;
 }
-let summaryHistTab='none';
 
 let chartInstances={};
 function buildSumCard(range,ro,re){
   const head=`<div class="sum-card-head"><span class="sum-card-title">${range.label}</span><span class="sum-card-sub">${range.sub}</span></div>`;
   if(!ro.length)return`<div class="sum-card">${head}<div class="no-data">No orders in this period.</div></div>`;
-  const sm=calcSummary(ro,re,range.start,range.end);
+  const sm=calcSummary(ro,re);
   const r=sm.rev;
   const bar=(lbl,amt,color,pctV)=>`<div class="sum-bar-row"><span class="sum-bar-lbl">${lbl}</span><div class="sum-bar-track"><div class="sum-bar-fill" style="width:${Math.min(100,Math.max(0,pctV))}%;background:${color}"></div></div><span class="sum-bar-amt" style="color:${color}">${$$(amt,2)}</span><span class="sum-bar-pct">${pct(pctV)}</span></div>`;
   const vbRows=Object.values(sm.vb).filter(x=>x.total>0).map(x=>`<div class="bk-row"><span class="bk-lbl">${e(x.label)}</span><span class="bk-val">${$$(x.total,2)}</span></div>`).join('');
@@ -1474,15 +1351,15 @@ function entryV(){
   for(let i=0;i<active.length;i+=2){const a=active[i],b=active[i+1];fieldRows+=`<div class="frow">${fg(a.id,a.label+' ($)',f[a.id]||'')}${b?fg(b.id,b.label+' ($)',f[b.id]||''): '<div></div>'}</div>`;}
   return`<div class="form-wrap">
     <h2 class="s-title">${editId?'Edit entry':'New shipment entry'}</h2>
-    <p class="s-sub">${editId?'All existing values are pre-filled below — change what you need and save.':'Fill in what shipped today.'}</p>
+    <p class="s-sub">${editId?'Update the details below.':'Fill in what shipped today.'}</p>
     ${prev}
     <div class="frow">${fg('date','Date shipped',f.date,'text')}${fg('orderNum','Order #',f.orderNum,'text')}</div>
     <div class="frow">${fg('customerName','Customer name',f.customerName||'','text')}${fg('description','Description',f.description,'text')}</div>
     <div class="frow">
       <div class="fg">
-        <label>Technician (who built it)</label>
+        <label>Technician</label>
         <select id="f-technician" onchange="fi('technician',this.value)" style="border:1px solid var(--border2);border-radius:var(--r);padding:8px 10px;font-size:13px;font-family:var(--fb);background:var(--bg2);color:var(--text);width:100%">
-          <option value="">— Select technician —</option>
+          <option value="">— Select —</option>
           ${employees.filter(emp=>emp.active).map(emp=>`<option value="${e(emp.name)}" ${f.technician===emp.name?'selected':''}>${e(emp.name)}${emp.role?' ('+e(emp.role)+')':''}</option>`).join('')}
           ${f.technician&&!employees.find(emp=>emp.name===f.technician)?`<option value="${e(f.technician)}" selected>${e(f.technician)} (removed)</option>`:''}
         </select>
@@ -1496,14 +1373,14 @@ function entryV(){
       ${fg('customerEmail','Customer email (optional)',f.customerEmail||'','email')}
     </div>
     ${retSec()}
-    <div class="fg" style="margin-top:12px"><label>Notes</label><input type="text" id="f-notes" value="${e(f.notes||'')}" placeholder="Any notes…" oninput="fi('notes',this.value)"></div>
+    <div class="fg" style="margin-top:12px"><label>Notes</label><input type="text" id="f-notes" value="${e(f.notes||'')}placeholder="Any notes…" oninput="fi('notes',this.value)"></div>
     <div style="margin-top:18px;display:flex;gap:10px">
       <button class="btn-p" onclick="submitEntry()">${editId?'Save changes':'Add entry'}</button>
       <button class="btn-g" onclick="cancelEntry()">Cancel</button>
     </div>
   </div>`;
 }
-function fg(id,lbl,val,type='number'){const v=val===0?'0':(val||'');return`<div class="fg"><label>${lbl}</label><input type="${type}" id="f-${id}" value="${e(v)}" placeholder="${type==='number'?'0':'—'}" oninput="fi('${id}',this.value)"></div>`;}
+function fg(id,lbl,val,type='number'){return`<div class="fg"><label>${lbl}</label><input type="${type}" id="f-${id}" value="${e(val||'')} " placeholder="0" oninput="fi('${id}',this.value)"></div>`;}
 function retSec(){
   const tNums=f.trackingNumbers||[];
   const trackInputs=tNums.map((t,i)=>`
@@ -1977,7 +1854,7 @@ function settV(){
   const periodHistory=sortedP.map((p,i)=>{const isCur=i===0;const burn=p.items.reduce((s,x)=>s+getItemDailyRate(x),0);return`<div class="period-item${isCur?' cur':''}" ><div class="period-top"><div><span style="font-weight:700;font-family:var(--font-head)">${p.effectiveDate}</span>${p.note?` <span style="font-size:12px;color:var(--text3)">— ${e(p.note)}</span>`:''}</div><div class="fc-row" style="gap:6px">${isCur?'<span class="cur-badge">CURRENT</span>':''} ${fcPeriods.length>1?`<button class="btn-d" onclick="delPeriod('${p.id}')">delete</button>`:''}</div></div><div class="period-items-list">${p.items.map(x=>`<div>${e(x.name)}: <span>${$$(x.amount,0)}/${x.freq==='daily'?'day':x.freq==='weekly'?'wk':'mo'}</span></div>`).join('')} <div>→ <span class="co">${$$(burn,2)}/day</span></div></div></div>`;}).join('');
   const cxHtml=customExpenses.map(x=>{const isE=x.endDate&&pd(x.endDate)<new Date();return`<div class="cx-card${isE?' ended':''}" ><div class="cx-edit-grid"><div class="cx-field"><label>Name</label><input type="text" value="${e(x.name)}" oninput="cxUp('${x.id}','name',this.value)"></div><div class="cx-field"><label>Amount ($)</label><input type="number" value="${x.amount}" oninput="cxUp('${x.id}','amount',this.value)"></div><div class="cx-field"><label>Frequency</label><select onchange="cxUp('${x.id}','freq',this.value)"><option value="daily" ${x.freq==='daily'?'selected':''}>/ day</option><option value="weekly" ${x.freq==='weekly'?'selected':''}>/ week</option><option value="monthly" ${x.freq==='monthly'?'selected':''}>/ month</option><option value="onetime" ${x.freq==='onetime'?'selected':''}>one-time</option></select></div><div class="cx-field"><label>Start date</label><input type="text" value="${x.startDate}" placeholder="MM/DD/YYYY" oninput="cxUp('${x.id}','startDate',this.value)"></div><div class="cx-field"><label>End date (blank = active)</label><input type="text" value="${x.endDate||''}" placeholder="MM/DD/YYYY" oninput="cxUp('${x.id}','endDate',this.value||null)"></div><div class="cx-field" style="align-self:flex-end"><label style="opacity:0">.</label><button class="btn-d" style="padding:8px 14px;font-size:13px;border-radius:var(--r);border:1px solid rgba(204,0,0,.4)" onclick="delCx('${x.id}')">Remove</button></div></div><div style="font-size:11px;color:var(--text3);margin-top:4px">${isE?`Ended ${x.endDate}`:`Active from ${x.startDate}${x.endDate?' to '+x.endDate:''}`}</div></div>`;}).join('');
   const fieldHtml=`<div style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:12px">${fieldConfig.map(f=>`<div class="fc-config-row"><input type="checkbox" ${f.active?'checked':''} onchange="toggleFieldActive('${f.id}',this.checked)" style="accent-color:var(--red)"><span style="font-size:10px;color:var(--text3);width:60px;flex-shrink:0;text-transform:uppercase;letter-spacing:.3px">${f.builtin?'built-in':'custom'}</span><input class="fc-lbl-inp" type="text" value="${e(f.label)}" oninput="updateFieldLabel('${f.id}',this.value)">${!f.builtin?`<button class="btn-d" onclick="removeCustomField('${f.id}')">remove</button>`:`<span style="width:52px"></span>`}</div>`).join('')}</div><button class="btn-g" onclick="addCustomField()">+ Add field</button>`;
-  const syncHtml=`<div class="sync-box"><div style="font-family:var(--font-head);font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">JSONBin.io cloud sync</div><div class="alert alert-info" style="margin-bottom:12px;font-size:12px">Create a free account at <a href="https://jsonbin.io" target="_blank" style="color:var(--blue)">jsonbin.io</a> → copy API key → paste below → click Create. Share Bin ID with team. Syncs every save + every 90 seconds.</div><div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">API key</div><input type="password" class="sync-inp" value="${syncConfig.apiKey}" placeholder="$2b$10$..." oninput="syncConfig.apiKey=this.value;saveSyncConf();"></div><div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Bin ID</div><input type="text" class="sync-inp" value="${syncConfig.binId}" placeholder="paste from jsonbin.io" oninput="syncConfig.binId=this.value;syncConfig.enabled=!!this.value;saveSyncConf();"></div><div class="fc-row" style="gap:8px;flex-wrap:wrap"><button class="btn-p" style="font-size:12px;padding:8px 16px" onclick="createBin()">Create new bin</button><button class="btn-p" style="font-size:12px;padding:8px 16px;background:var(--green);border:none" onclick="syncToCloud().then(()=>alert('Pushed! Other devices can now Pull now to get your latest data.'))">⬆ Push to cloud</button><button class="btn-p" style="font-size:12px;padding:8px 16px" onclick="syncFromCloud().then(c=>{if(c){render();alert('Pulled! Your data is now up to date.');}else{alert('Pull failed — check your API key and Bin ID.');}})">⬇ Pull from cloud</button></div>${syncConfig.enabled?`<div style="font-size:11px;color:var(--green);margin-top:8px">✓ Sync enabled — bin: ${syncConfig.binId}</div>`:`<div style="font-size:11px;color:var(--text3);margin-top:8px">Not configured yet.</div>`}</div>`;
+  const syncHtml=`<div class="sync-box"><div style="font-family:var(--font-head);font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">JSONBin.io cloud sync</div><div class="alert alert-info" style="margin-bottom:12px;font-size:12px">Create a free account at <a href="https://jsonbin.io" target="_blank" style="color:var(--blue)">jsonbin.io</a> → copy API key → paste below → click Create. Share Bin ID with team. Syncs every save + every 90 seconds.</div><div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">API key</div><input type="password" class="sync-inp" value="${syncConfig.apiKey}" placeholder="$2b$10$..." oninput="syncConfig.apiKey=this.value;saveSyncConf();"></div><div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Bin ID</div><input type="text" class="sync-inp" value="${syncConfig.binId}" placeholder="paste from jsonbin.io" oninput="syncConfig.binId=this.value;syncConfig.enabled=!!this.value;saveSyncConf();"></div><div class="fc-row" style="gap:8px;flex-wrap:wrap"><button class="btn-p" style="font-size:12px;padding:8px 16px" onclick="createBin()">Create new bin</button><button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="syncToCloud()">Push now</button><button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="syncFromCloud().then(c=>{if(c)render();})">Pull now</button></div>${syncConfig.enabled?`<div style="font-size:11px;color:var(--green);margin-top:8px">✓ Sync enabled — bin: ${syncConfig.binId}</div>`:`<div style="font-size:11px;color:var(--text3);margin-top:8px">Not configured yet.</div>`}</div>`;
   // Password change
   const pwHtml=`<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
     <div class="fg" style="flex:1"><label>New password</label><input type="password" id="new-pw" placeholder="Enter new password"></div>
@@ -1986,25 +1863,74 @@ function settV(){
   <p style="font-size:11px;color:var(--text3);margin-top:6px">Current password is required to log in on any device. Make sure your managers know it.</p>`;
   const alertHtml=`<div class="fc-row" style="gap:10px;align-items:center;flex-wrap:wrap">
     <span style="font-size:13px;color:var(--text2)">Flag orders below</span>
-    <input type="number" class="inp-base" value="${alertThreshold}" style="width:70px" oninput="alertThreshold=parseFloat(this.value)||30;localStorage.setItem('hpdc-at',alertThreshold);scheduleSync()">
+    <input type="number" class="inp-base" value="${alertThreshold}" style="width:70px" oninput="alertThreshold=parseFloat(this.value)||30;localStorage.setItem('hpdc-at',alertThreshold)">
     <span style="font-size:13px;color:var(--text2)">% gross margin in red</span>
   </div>`;
   return`<div style="max-width:640px">
     <div class="ss"><div class="ss-title">Margin alert threshold</div>${alertHtml}</div>
-    <div class="ss"><div class="ss-title">Fixed cost rates</div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.6">Each period has an effective date. Rename anything, change amounts, add or remove items. Past data stays untouched.</p>
-      <div class="period-editor"><div style="font-family:var(--font-head);font-size:14px;font-weight:700;text-transform:uppercase;margin-bottom:12px">New rate period</div>
-        <div class="period-editor-items">${piRows}</div>
-        <button class="btn-s" style="margin-bottom:14px;font-size:11px" onclick="addPI()">+ Add line item</button>
-        <div style="font-size:13px;color:var(--text2);margin-bottom:10px">Daily burn: <strong class="cp" id="pd-burn">${$$(draftBurn,2)}/day</strong></div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div class="fg"><label>Effective from</label><input type="text" id="pd-date" value="${e(np.effectiveDate||'')} " placeholder="MM/DD/YYYY" oninput="newPeriodDraft.effectiveDate=this.value" style="width:130px"></div>
-          <div class="fg" style="flex:1"><label>Note (optional)</label><input type="text" id="pd-note" value="${e(np.note||'')} " placeholder="e.g. switched to mortgage" oninput="newPeriodDraft.note=this.value"></div>
-          <button class="btn-p" style="padding:9px 18px;font-size:12px;align-self:flex-end" onclick="savePeriod()">Save period</button>
+    <div class="ss"><div class="ss-title">Employee roster</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.6">Employees appear as a dropdown when entering orders. Syncs across all devices.</p>
+      ${employees.length?`<div style="border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:12px">
+        <div style="display:grid;grid-template-columns:1fr 140px 80px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:6px 12px;background:var(--bg3);border-bottom:1px solid var(--border)"><span>Name</span><span>Role</span><span></span></div>
+        ${employees.map(emp=>`<div style="display:grid;grid-template-columns:1fr 140px 80px;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
+          <span style="font-weight:600">${e(emp.name)}</span>
+          <span style="color:var(--text3);font-size:12px">${e(emp.role||'—')}</span>
+          <div style="text-align:right"><button class="btn-d" style="font-size:11px;padding:3px 9px" data-id="${emp.id}" onclick="removeEmployee(this.dataset.id)">Remove</button></div>
+        </div>`).join('')}
+      </div>`:'<p style="font-size:13px;color:var(--text3);margin-bottom:12px">No employees yet.</p>'}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div class="fg" style="flex:1;min-width:150px"><label>Name</label><input type="text" id="new-emp-name" class="inp-base" style="width:100%" placeholder="e.g. Mike" onkeydown="if(event.key==='Enter')addEmployee()"></div>
+        <div class="fg" style="width:160px"><label>Role (optional)</label><input type="text" id="new-emp-role" class="inp-base" style="width:100%" placeholder="e.g. Lead tech" onkeydown="if(event.key==='Enter')addEmployee()"></div>
+        <button class="btn-p" style="padding:8px 16px" onclick="addEmployee()">+ Add employee</button>
+      </div>
+    </div>
+    <div class="ss"><div class="ss-title">Daily burn rate</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.6">Set your total daily overhead. When costs change, add a new entry — the app uses the correct rate for each date automatically. Syncs across all devices.</p>
+      <div style="border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:14px">
+        <div style="display:grid;grid-template-columns:130px 110px 1fr 50px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:6px 14px;background:var(--bg3);border-bottom:1px solid var(--border)">
+          <span>Effective from</span><span style="text-align:right">$/day</span><span style="padding-left:10px">Note</span><span></span>
+        </div>
+        ${burnRates.length?[...burnRates].sort((a,b)=>pd(b.effectiveDate)-pd(a.effectiveDate)).map((r,i)=>`<div style="display:grid;grid-template-columns:130px 110px 1fr 50px;padding:8px 14px;border-bottom:1px solid var(--border);align-items:center;${i===0?'background:rgba(204,0,0,.04)':''}">`
+          +`<div style="font-size:12px;font-weight:${i===0?'700':'400'}">${e(r.effectiveDate)}${i===0?' <span style="font-size:9px;background:rgba(204,0,0,.15);color:var(--red);border-radius:3px;padding:1px 5px;font-weight:700">CURRENT</span>':''}</div>`
+          +`<div style="text-align:right;font-size:14px;font-weight:700;color:var(--orange)">${$$(r.dailyTotal,2)}</div>`
+          +`<div style="font-size:12px;color:var(--text3);padding-left:10px">${e(r.note||'—')}</div>`
+          +`<div style="text-align:center">${burnRates.length>1?'<button class="btn-d" style="font-size:10px;padding:2px 7px" data-id="'+r.id+'" onclick="deleteBurnRate(this.dataset.id)">×</button>':''}</div>`
+          +'</div>'
+        ).join(''):`<div style="padding:12px 14px;font-size:13px;color:var(--text3)">No burn rates yet — add one below.</div>`}
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px;margin-bottom:12px">
+        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Add new rate</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <div class="fg" style="min-width:130px"><label>Effective date</label><input type="text" id="new-burn-date" class="inp-base" style="width:100%" value="${today()}"></div>
+          <div class="fg" style="min-width:110px"><label>Daily total ($)</label><input type="number" id="new-burn-amt" class="inp-base" style="width:100%" placeholder="1826.14" step="0.01"></div>
+          <div class="fg" style="flex:1;min-width:150px"><label>Note (optional)</label><input type="text" id="new-burn-note" class="inp-base" style="width:100%" placeholder="e.g. hired new tech"></div>
+          <button class="btn-p" style="padding:8px 18px" onclick="addBurnRate()">+ Add rate</button>
+        </div>
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:14px">
+        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Calculator</div>
+        <div id="calc-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+          ${calcItems.map((item,i)=>`<div style="display:grid;grid-template-columns:1fr 100px 80px 40px;gap:6px;align-items:center">
+            <input type="text" class="inp-base" style="font-size:12px" value="${e(item.label)}" placeholder="Label" onchange="updateCalcItem(${i},'label',this.value)">
+            <input type="number" class="inp-base" style="font-size:12px;text-align:right" value="${item.amount||''}" placeholder="Amount" oninput="updateCalcItem(${i},'amount',parseFloat(this.value)||0);calcBurn()">
+            <select class="inp-base" style="font-size:12px" onchange="updateCalcItem(${i},'freq',this.value);calcBurn()">
+              <option value="daily" ${item.freq==='daily'?'selected':''}>/ day</option>
+              <option value="weekly" ${item.freq==='weekly'?'selected':''}>/ week</option>
+              <option value="monthly" ${item.freq==='monthly'?'selected':''}>/ month</option>
+            </select>
+            <button class="btn-d" style="font-size:11px;padding:3px 8px" onclick="removeCalcItem(${i})">×</button>
+          </div>`).join('')}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <button class="btn-g" style="font-size:12px;padding:5px 12px" onclick="addCalcItem()">+ Add line</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:10px;border-top:1px solid var(--border)">
+          <span style="font-size:16px;font-weight:700;color:var(--orange)">Daily total: <span id="calc-result">$0.00</span></span>
+          <button class="btn-g" style="font-size:12px;padding:5px 14px" onclick="useBurnCalc()">Use this ↑</button>
         </div>
       </div>
     </div>
-    <div class="ss"><div class="ss-title">Rate history</div>${periodHistory}</div>
+
     <div class="ss"><div class="ss-title">Custom expenses</div>
       <p style="font-size:13px;color:var(--text2);margin-bottom:14px;line-height:1.6">Extra costs that appear in the fixed cost row on active days.</p>
       ${cxHtml||'<p style="font-size:13px;color:var(--text3);margin-bottom:12px">None added yet.</p>'}
@@ -2021,46 +1947,6 @@ function settV(){
         ${localStorage.getItem('hpdc-bg')?`<button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="removeBg()">Remove background</button><span style="font-size:12px;color:var(--green)">✓ Background active</span>`:'<span style="font-size:12px;color:var(--text3)">No background set</span>'}
       </div>
     </div>
-    <div class="ss"><div class="ss-title">Version history</div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.6">Save a snapshot of your current data at any time. Keep up to 10 versions. Restore any version instantly — your current state is saved to Undo first so you can always go back.</p>
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
-        <button class="btn-p" onclick="saveVersion()">💾 Save version now</button>
-        <span style="font-size:12px;color:var(--text3)">Auto-backup every 5 entries · <span style="color:var(--text2);font-weight:600">${5-entriesSinceBackup} until next backup</span></span>
-      </div>
-      ${(()=>{
-        let versions=[];
-        try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
-        if(!versions.length)return'<p style="font-size:13px;color:var(--text3)">No saved versions yet. Click Save version now to create your first snapshot.</p>';
-        return versions.map(v=>`<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:6px;flex-wrap:wrap">
-          <div style="flex:1">
-            <div style="font-size:13px;font-weight:600">${v._label}${v._auto?'':' <span style="font-size:9px;background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.2);border-radius:3px;padding:1px 5px;font-weight:600;vertical-align:middle">MANUAL</span>'}</div>
-            <div style="font-size:11px;color:var(--text3)">${v.orders?v.orders.length:0} orders · ${v.fcPeriods?v.fcPeriods.length:0} rate periods</div>
-          </div>
-          <button class="btn-g" style="font-size:12px;padding:5px 12px" onclick="restoreVersion(${v._ts})">↩ Restore</button>
-          <button class="btn-d" style="font-size:12px;padding:5px 10px" onclick="deleteVersion(${v._ts})">×</button>
-        </div>`).join('');
-      })()}
-    </div>
-    <div class="ss"><div class="ss-title">Employee roster</div>
-      <p style="font-size:13px;color:var(--text2);margin-bottom:12px;line-height:1.6">Manage your team. Employees appear as dropdown options in the Technician field when entering orders — no more typos or duplicate names.</p>
-      ${employees.length?`<div style="border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:12px">
-        <div style="display:grid;grid-template-columns:1fr 120px 80px;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:6px 12px;background:var(--bg3);border-bottom:1px solid var(--border)">
-          <span>Name</span><span>Role</span><span></span>
-        </div>
-        ${employees.map(emp=>`<div style="display:grid;grid-template-columns:1fr 120px 80px;padding:8px 12px;border-bottom:1px solid var(--border);align-items:center;font-size:13px">
-          <span style="font-weight:600">${e(emp.name)}</span>
-          <span style="color:var(--text3);font-size:12px">${e(emp.role||'—')}</span>
-          <div style="display:flex;justify-content:flex-end">
-            <button class="btn-d" style="font-size:11px;padding:3px 9px" onclick="removeEmployee('${emp.id}')">Remove</button>
-          </div>
-        </div>`).join('')}
-      </div>`:'<p style="font-size:13px;color:var(--text3);margin-bottom:12px">No employees added yet.</p>'}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-        <div class="fg" style="flex:1;min-width:150px"><label>Name</label><input type="text" id="new-emp-name" class="inp-base" style="width:100%" placeholder="e.g. Mike" onkeydown="if(event.key==='Enter')addEmployee(document.getElementById('new-emp-name').value,document.getElementById('new-emp-role').value)"></div>
-        <div class="fg" style="width:140px"><label>Role (optional)</label><input type="text" id="new-emp-role" class="inp-base" style="width:100%" placeholder="e.g. Lead tech" onkeydown="if(event.key==='Enter')addEmployee(document.getElementById('new-emp-name').value,document.getElementById('new-emp-role').value)"></div>
-        <button class="btn-p" style="padding:8px 16px;margin-bottom:0" onclick="addEmployee(document.getElementById('new-emp-name').value,document.getElementById('new-emp-role').value);document.getElementById('new-emp-name').value='';document.getElementById('new-emp-role').value=''">+ Add employee</button>
-      </div>
-    </div>
     <div class="ss"><div class="ss-title">Export / import</div>
       <div class="fc-row" style="gap:8px;flex-wrap:wrap">
         <button class="btn-g" onclick="exportData()">Export JSON backup</button>
@@ -2074,7 +1960,7 @@ function settV(){
       <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.6">Set your return window. Cores outstanding beyond this many days are flagged as overdue. 90+ days triggers the warranty void option.</p>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <label style="font-size:13px;color:var(--text2)">Return window:</label>
-        <input type="number" class="inp-base" value="${coreReturnDays}" style="width:80px" min="1" max="365" oninput="coreReturnDays=parseInt(this.value)||30;localStorage.setItem('hpdc-crd',coreReturnDays);scheduleSync()">
+        <input type="number" class="inp-base" value="${coreReturnDays}" style="width:80px" min="1" max="365" oninput="coreReturnDays=parseInt(this.value)||30;localStorage.setItem('hpdc-crd',coreReturnDays)">
         <span style="font-size:13px;color:var(--text2)">days from fulfillment date</span>
       </div>
       <p style="font-size:11px;color:var(--text3);margin-top:6px">Currently: cores past <strong style="color:var(--text)">${coreReturnDays} days</strong> are flagged overdue. Cores past 90 days get the warranty void option.</p>
@@ -2084,10 +1970,10 @@ function settV(){
       <textarea id="email-tpl-inp" style="width:100%;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);padding:10px 12px;font-size:13px;color:var(--text2);font-family:inherit;line-height:1.6;min-height:120px;resize:vertical;" onchange="saveEmailTemplate(this.value)">${e(emailTemplate)}</textarea>
       <button class="btn-g" style="margin-top:8px" onclick="resetEmailTemplate()">Reset to default</button>
     </div>
-    <div class="ss"><div class="ss-title">Fixed cost audit</div>${buildAudit(dated,sortedP)}</div>
+
   </div>`;
 }
-function changePass(){const el=document.getElementById('new-pw');if(!el?.value){return;}appPassword=el.value;localStorage.setItem(PASS_KEY,appPassword);el.value='';scheduleSync();alert('Password updated and synced.');}
+function changePass(){const el=document.getElementById('new-pw');if(!el?.value){return;}appPassword=el.value;localStorage.setItem(PASS_KEY,appPassword);el.value='';alert('Password updated.');}
 function updPI(key,field,val){const item=newPeriodDraft?.items.find(x=>x.key===key);if(!item)return;item[field]=field==='amount'?parseFloat(val)||0:val;const rEl=document.getElementById(`pi-rate-${key}`);if(rEl)rEl.textContent=`${$$(getItemDailyRate(item),2)}/day`;const bEl=document.getElementById('pd-burn');if(bEl){const b=newPeriodDraft.items.reduce((s,x)=>s+getItemDailyRate(x),0);bEl.textContent=`${$$(b,2)}/day`;}}
 function addPI(){newPeriodDraft.items.push({key:'fc_'+uid(),name:'New item',amount:0,freq:'monthly'});render();}
 function removePI(key){if(newPeriodDraft.items.length<=1)return;newPeriodDraft.items=newPeriodDraft.items.filter(x=>x.key!==key);render();}
@@ -2151,106 +2037,67 @@ function clearCoreSearch(){
   document.getElementById('view').innerHTML=buildView();
   updateBadge();updateSummary();updateUndoBtn();
 }
-function saveEmployees(){localStorage.setItem('hpdc-emp',JSON.stringify(employees));if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId)syncToCloud();}
-function addEmployee(name,role){
-  if(!name.trim())return;
-  employees.push({id:uid(),name:name.trim(),role:(role||'').trim(),active:true});
+function saveEmailTemplate(v){emailTemplate=v;localStorage.setItem('hpdc-etpl',v);}
+function resetEmailTemplate(){emailTemplate="Please drop the core off at any UPS location at your earliest convenience.\n\nThank you for your business!\nHeavy Duty Parts Company";localStorage.setItem('hpdc-etpl',emailTemplate);const el=document.getElementById('email-tpl-inp');if(el)el.value=emailTemplate;}
+function addBurnRate(){
+  const date=(document.getElementById('new-burn-date')?.value||'').trim()||today();
+  const amt=parseFloat(document.getElementById('new-burn-amt')?.value)||0;
+  const note=(document.getElementById('new-burn-note')?.value||'').trim();
+  if(!amt){alert('Please enter a daily total amount.');return;}
+  pushUndo();
+  // Normalize date using pd() since normDate may not exist
+  const dObj=pd(date);const normalized=dObj&&!isNaN(dObj)?(dObj.getMonth()+1)+'/'+dObj.getDate()+'/'+dObj.getFullYear():date;
+  burnRates.push({id:uid(),effectiveDate:normalized,dailyTotal:amt,note});
+  burnRates.sort((a,b)=>pd(b.effectiveDate)-pd(a.effectiveDate));
+  saveBurnRates();render();
+}
+function deleteBurnRate(id){
+  if(burnRates.length<=1){alert('Cannot delete the only rate — edit it instead by adding a new one.');return;}
+  pushUndo();
+  burnRates=burnRates.filter(r=>r.id!==id);
+  saveBurnRates();render();
+}
+// Calc items state — persisted to localStorage
+let calcItems=JSON.parse(localStorage.getItem('hpdc-calc')||'null')||[
+  {label:'Payroll',amount:0,freq:'weekly'},
+  {label:'Rent',amount:0,freq:'monthly'},
+  {label:'Merchant fees',amount:0,freq:'monthly'},
+  {label:'Google Ads',amount:0,freq:'daily'},
+  {label:'Loan / PPP',amount:0,freq:'weekly'},
+];
+function saveCalcItems(){localStorage.setItem('hpdc-calc',JSON.stringify(calcItems));}
+function addCalcItem(){calcItems.push({label:'',amount:0,freq:'monthly'});saveCalcItems();render();}
+function removeCalcItem(i){calcItems.splice(i,1);saveCalcItems();render();}
+function updateCalcItem(i,field,val){calcItems[i][field]=val;saveCalcItems();}
+function calcBurn(){
+  const total=calcItems.reduce((s,item)=>{
+    const a=parseFloat(item.amount)||0;
+    return s+(item.freq==='daily'?a:item.freq==='weekly'?a/7:a/30);
+  },0);
+  const el=document.getElementById('calc-result');
+  if(el)el.textContent='$'+total.toFixed(2);
+}
+function useBurnCalc(){
+  const el=document.getElementById('calc-result');
+  if(!el)return;
+  const amt=parseFloat(el.textContent.replace('$',''))||0;
+  const inp=document.getElementById('new-burn-amt');
+  if(inp){inp.value=amt.toFixed(2);inp.focus();}
+}
+function saveEmployees(){localStorage.setItem('hpdc-emp',JSON.stringify(employees));if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId)scheduleSync();}
+function addEmployee(){
+  const name=(document.getElementById('new-emp-name')?.value||'').trim();
+  const role=(document.getElementById('new-emp-role')?.value||'').trim();
+  if(!name){alert('Enter a name.');return;}
+  employees.push({id:uid(),name,role,active:true});
   saveEmployees();render();
 }
 function removeEmployee(id){
   employees=employees.filter(e=>e.id!==id);
   saveEmployees();render();
 }
-function saveEmailTemplate(v){emailTemplate=v;localStorage.setItem('hpdc-etpl',v);scheduleSync();}
-function resetEmailTemplate(){emailTemplate="Please drop the core off at any UPS location at your earliest convenience.\n\nThank you for your business!\nHeavy Duty Parts Company";localStorage.setItem('hpdc-etpl',emailTemplate);const el=document.getElementById('email-tpl-inp');if(el)el.value=emailTemplate;}
-function autoSaveVersion(){
-  // Silent version save — no alert, used for automatic backups
-  const snap={
-    _ts:Date.now(),
-    _label:'Auto-backup — '+new Date().toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}),
-    _auto:true,
-    orders:JSON.parse(JSON.stringify(orders)),
-    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
-    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
-    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
-    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
-    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
-  };
-  let versions=[];
-  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
-  // Remove oldest auto-backups if over limit, always keep manual saves
-  const autos=versions.filter(v=>v._auto);
-  const manuals=versions.filter(v=>!v._auto);
-  // Keep last 8 auto + all manuals (up to 10 total)
-  const trimmedAutos=autos.slice(0,7); // we're adding one more, so keep 7
-  versions=[snap,...trimmedAutos,...manuals].slice(0,10);
-  localStorage.setItem('hpdc-versions',JSON.stringify(versions));
-  entriesSinceBackup=0;
-  localStorage.setItem('hpdc-esb','0');
-}
-function saveVersion(){
-  // sync triggered after save
-  var _origSave=true;
-  const snap={
-    _ts:Date.now(),
-    _label:new Date().toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}),
-    orders:JSON.parse(JSON.stringify(orders)),
-    fcPeriods:JSON.parse(JSON.stringify(fcPeriods)),
-    customExpenses:JSON.parse(JSON.stringify(customExpenses)),
-    dailyOverrides:JSON.parse(JSON.stringify(dailyOverrides)),
-    dailyExpenses:JSON.parse(JSON.stringify(dailyExpenses)),
-    fieldConfig:JSON.parse(JSON.stringify(fieldConfig)),
-  };
-  let versions=[];
-  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
-  versions.unshift(snap);
-  if(versions.length>10)versions=versions.slice(0,10); // keep 10 versions
-  localStorage.setItem('hpdc-versions',JSON.stringify(versions));
-  scheduleSync();
-  if(view==='settings')render();
-  alert('Version saved: '+snap._label);
-}
-function restoreVersion(ts){
-  let versions=[];
-  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
-  const snap=versions.find(v=>v._ts===ts);
-  if(!snap)return;
-  pushUndo();
-  orders=snap.orders;
-  if(snap.fcPeriods)fcPeriods=snap.fcPeriods;
-  if(snap.customExpenses)customExpenses=snap.customExpenses;
-  if(snap.dailyOverrides)dailyOverrides=snap.dailyOverrides;
-  if(snap.dailyExpenses)dailyExpenses=snap.dailyExpenses;
-  if(snap.fieldConfig)fieldConfig=mergeFields(snap.fieldConfig);
-  saveAll();savePeriods();saveCx();saveFields();
-  render();
-  alert('Restored to version: '+snap._label+'. Use Undo to go back if needed.');
-}
-function deleteVersion(ts){
-  let versions=[];
-  try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
-  versions=versions.filter(v=>v._ts!==ts);
-  localStorage.setItem('hpdc-versions',JSON.stringify(versions));
-  scheduleSync();
-  if(view==='settings')render();
-}
 function clearAllData(){pushUndo();orders=[];dailyExpenses=[];dailyOverrides={};saveAll();render();}
-function submitEntry(){
-  if(!f.revenue){return;}
-  f.date=normDate(f.date)||f.date; // ensure consistent M/D/YYYY format
-  pushUndo();
-  const isNew=!editId;
-  if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId}:o);editId=null;}
-  else orders.push({...f,id:uid()});
-  saveAll();
-  // Auto-backup every 5 new entries
-  if(isNew){
-    entriesSinceBackup++;
-    localStorage.setItem('hpdc-esb',entriesSinceBackup);
-    if(entriesSinceBackup>=5)autoSaveVersion();
-  }
-  f=fresh();sv('daily');
-}
+function submitEntry(){if(!f.revenue){return;}pushUndo();if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId}:o);editId=null;}else orders.push({...f,id:uid()});saveAll();f=fresh();sv('daily');}
 function cancelEntry(){editId=null;f=fresh();sv('daily');}
 function editOrd(id){const o=orders.find(x=>x.id===id);if(o){f={...o};editId=id;sv('entry');}}
 function delOrd(id){pushUndo();orders=orders.filter(o=>o.id!==id);saveAll();render();}
@@ -2275,11 +2122,11 @@ function uploadBg(){
   inp.onchange=e=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=ev=>{localStorage.setItem('hpdc-bg',ev.target.result);applyBg();scheduleSync();if(view==='settings')render();};
+    reader.onload=ev=>{localStorage.setItem('hpdc-bg',ev.target.result);applyBg();if(view==='settings')render();};
     reader.readAsDataURL(file);
   };inp.click();
 }
-function removeBg(){localStorage.removeItem('hpdc-bg');applyBg();scheduleSync();if(view==='settings')render();}
+function removeBg(){localStorage.removeItem('hpdc-bg');applyBg();if(view==='settings')render();}
 loadData();
 applyBg();
 if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId){syncFromCloud().then(c=>{if(c)render();startAutoPoll();});}
@@ -2348,33 +2195,28 @@ function dailyV(){
 
   let rnet=0;
   const allDated=byDate();
-  // Running net must include ALL calendar days (including gap days with no orders)
+  // Running net walks EVERY calendar day (not just order days) to charge burn on gap days
   const fullRnet={};
   let r=0;
   if(allDated.length){
-    // Build a map of days that have orders
     const ordMap={};
     allDated.forEach(([date,dayOrders])=>{ordMap[date]=dayOrders;});
-    // Iterate every calendar day from first entry to today
-    const firstDate=pd(allDated[0][0]);
-    // Loop through to the LATER of today or the last entry date (handles future-dated entries)
+    const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
+    const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
+    bizStart.setHours(0,0,0,0);
     const lastEntryDate=pd(allDated[allDated.length-1][0]);
-    const today=new Date();today.setHours(23,59,59);
-    const lastDate=lastEntryDate>today?lastEntryDate:today;
-    const cur=new Date(firstDate);
-    cur.setHours(0,0,0,0);
+    const todayD=new Date();todayD.setHours(23,59,59);
+    const lastDate=lastEntryDate>todayD?lastEntryDate:todayD;
+    const cur=new Date(bizStart);
     while(cur<=lastDate){
       const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
       const dayOrds=ordMap[dstr]||[];
       const dRev=dayOrds.reduce((s,o)=>s+n(o.revenue),0);
       const dVc=dayOrds.reduce((s,o)=>s+vc(o),0);
       r+=dRev-dVc-getDayBurn(dstr)-getDayExpTotal(dstr);
-      // Store for days that have entries (so the day blocks show correct running total)
       if(ordMap[dstr])fullRnet[dstr]=r;
       cur.setDate(cur.getDate()+1);
     }
-    // Also fill in the current running total for the display
-    // For the most recent entry day, make sure it reflects all gap days after it
   }
 
   const dayData=(isFiltered?filteredDated:allDated).map(([date,dayOrders])=>{
@@ -2449,9 +2291,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
         +'</div>'
         // Order details
         +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order details</div>'
-        +(o.customerName?'<div style="font-size:12px;margin-bottom:4px;font-weight:600">👤 '+e(o.customerName)+'</div>':'')
-    +(o.technician?'<div style="font-size:12px;margin-bottom:4px;color:var(--blue)">🔧 '+e(o.technician)+' · '+(parseInt(o.quantity)||1)+' head'+(parseInt(o.quantity)>1?'s':'')+'</div>':'')
-    +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
+        +(o.customerEmail?'<div style="font-size:12px;margin-bottom:4px;color:var(--text2)">📧 '+e(o.customerEmail)+'</div>':'')
         +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:4px;color:var(--amber);font-weight:600">⚠ Core value at risk: '+$$(n(o.coreValue),2)+'</div>':'')
         +(o.returnSent?'<div style="font-size:12px;margin-bottom:4px;color:'+(isOrderReturned(o)?'var(--green)':'var(--amber)')+'">'+( isOrderReturned(o)?'✓ Core returned':'⚑ Core return pending')+'</div>':'')
         +(tNums.length?'<div style="font-size:10px;color:var(--text3);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;font-weight:600">Tracking</div>'+tNums.map(t=>'<div style="font-family:monospace;font-size:11px;color:var(--text2);margin-bottom:2px">'+e(t)+'</div>').join(''):'')
@@ -2461,7 +2301,7 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
     }
     return '<div class="ord-row'+(lowM?' low-margin':'') +'" style="cursor:pointer" onclick="toggleOrdExpand(\''+oid+'\')">'+
       '<span class="ord-num">#'+e(o.orderNum)+'</span>'
-      +'<span class="ord-desc">'+e(o.description)+(o.customerName?' <span style="font-size:10px;color:var(--text3)">· '+e(o.customerName)+'</span>':'')+(o.technician?' <span style="font-size:10px;color:var(--blue)">🔧'+e(o.technician)+'</span>':'')+'</span>'
+      +'<span class="ord-desc">'+e(o.description)+'</span>'
       +'<span class="ord-rev">'+$$(n(o.revenue),2)+'</span>'
       +'<span class="ord-vc cr">−'+$$(vc(o),2)+'</span>'
       +'<span class="ord-gp '+cc(gp(o))+'">'+$$(gp(o),2)+' <span style="font-size:10px;opacity:.7">'+gpPct(o).toFixed(0)+'%</span></span>'
@@ -2476,17 +2316,18 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
 
 
   const dayExps=getDayExpenses(date);
-
-  const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
-  const addForm=addingExpDate===date?`<div class="exp-add-row">
-    <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
-    <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
-    <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
-    <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
-    <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
-  </div>`:`<div style="padding:8px 16px"><button class="btn-g" style="font-size:12px;padding:6px 14px" onclick="event.stopPropagation();openAddExp('${date}')">+ Add expense</button></div>`;
-  const expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
-
+  let expSection='';
+  if(dayExps.length||addingExpDate===date){
+    const expRows=dayExps.map(x=>`<div class="exp-row"><span class="exp-desc">${e(x.description)}</span><span class="exp-cat">${e(x.category)}</span><span class="exp-amt cr">−${$$(n(x.amount),2)}</span><span style="flex:0 0 32px;display:flex;justify-content:flex-end"><button class="btn-d" onclick="delDailyExp('${x.id}')">×</button></span></div>`).join('');
+    const addForm=addingExpDate===date?`<div class="exp-add-row">
+      <input type="text" class="inp-base" placeholder="Description" style="flex:1;min-width:120px" oninput="dexpField('description',this.value)">
+      <input type="number" class="inp-base" placeholder="Amount $" style="width:100px" oninput="dexpField('amount',this.value)">
+      <input type="text" class="inp-base" placeholder="Category (optional)" style="width:120px" oninput="dexpField('category',this.value)">
+      <button class="btn-p" style="padding:5px 14px;font-size:12px" onclick="confirmAddExp('${date}')">Add</button>
+      <button class="btn-g" style="padding:5px 12px;font-size:12px" onclick="cancelAddExp()">Cancel</button>
+    </div>`:`<div style="padding:6px 16px"><button class="btn-s" onclick="event.stopPropagation();openAddExp('${date}')">+ one-time expense</button></div>`;
+    expSection=`<div class="day-exp-section">${dayExps.length?'<div style="padding:5px 16px 0;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px">One-time expenses</div>':''}${expRows}${addForm}</div>`;
+  }
   const period=getPeriod(date);
   const coreInputs=period.items.map(item=>`<div class="fc-field">
     <span class="fc-field-lbl" title="${item.name}">${e(item.name)}</span>
@@ -2510,20 +2351,40 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
       </div>
     </div>
     ${isOpen?`
-    <div style="padding:6px 14px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px"><button class="btn-p" style="font-size:12px;padding:5px 14px" onclick="event.stopPropagation();addForDate('${date}')">+ New order</button><span style="font-size:11px;color:var(--text3)">Date pre-fills as ${date} — change it in the form if needed</span></div>
     <div class="day-orders">${ordHdr}${ordRows}</div>
     ${expSection}
     <div class="day-fc">
       <span class="fc-section-lbl">Fixed</span>
-      <div class="fc-fields">${coreInputs}${cxInputs}</div>
-      <div class="fc-right">
+      <span style="font-size:12px;color:var(--text3);margin-left:8px">${$$(dBurn,2)}/day</span>
+      <div class="fc-right" style="margin-left:auto">
         <div><span class="fc-total-lbl">Total</span><span class="fc-total-val" id="dburn-${s}">${$$(dBurn,2)}</span></div>
-        <button class="fc-reset" id="dres-${s}" style="display:${hasOv?'':' none'}" onclick="event.stopPropagation();resetDay('${date}')">↺ reset</button>
       </div>
     </div>`:''}
   </div>`;
 }
 function addForDate(d){entryDatePreset=d;sv('entry');}
+
+// ── SUMMARY VIEW ──────────────────────────────────────────────────────────────
+function summaryV(){
+  if(!orders.length)return`<div class="empty"><h3>No data yet</h3></div>`;
+  const ranges=dateRanges();
+  // break even
+  const b=getDayBurn(todayShort());
+  const avgVC=orders.length?orders.reduce((s,o)=>s+vc(o),0)/orders.length:0;
+  const avgRev=orders.length?orders.reduce((s,o)=>s+n(o.revenue),0)/orders.length:0;
+  const avgGP=avgRev-avgVC;
+  const ordersNeeded=avgGP>0?Math.ceil(b/avgGP):'∞';
+  const revNeeded=avgGP>0?b/(avgGP/avgRev)*100:0;
+  const beHtml=`<div class="breakeven-box">
+    <div class="be-title">Break-even today (based on averages)</div>
+    <div class="be-grid">
+      <div class="be-metric"><div class="be-lbl">Daily burn</div><div class="be-val co">${$$(b,2)}</div></div>
+      <div class="be-metric"><div class="be-lbl">Orders needed</div><div class="be-val cp">${ordersNeeded}</div></div>
+      <div class="be-metric"><div class="be-lbl">Revenue needed</div><div class="be-val cg">${revNeeded>0?$$(b/(avgGP/avgRev)):'—'}</div></div>
+    </div>
+  </div>`;
+  return beHtml+`<div class="sum-cards">${['today','week','month','year'].map(k=>{const r=ranges[k];return buildSumCard(r,ordersInRange(r.start,r.end),expensesInRange(r.start,r.end));}).join('')}</div>`;
+}
 
 </script>
 </body>
