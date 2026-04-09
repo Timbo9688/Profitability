@@ -1273,12 +1273,17 @@ function summaryV(){
   // Build last N weeks
   function getLast(cnt, unit){
     const result=[];
-    const now=new Date();
+    const now=new Date();now.setHours(23,59,59);
+    // Business inception date — first ever order
+    const allDates=orders.map(o=>pd(o.date)).filter(Boolean);
+    const bizStart=allDates.length?new Date(Math.min(...allDates.map(d=>d.getTime()))):now;
+    bizStart.setHours(0,0,0,0);
     for(let i=0;i<cnt;i++){
       let start,end,label;
       if(unit==='week'){
-        end=new Date(now);end.setDate(now.getDate()-(now.getDay())-(i*7));end.setHours(23,59,59);
-        start=new Date(end);start.setDate(end.getDate()-6);start.setHours(0,0,0,0);
+        const base=new Date(now);base.setDate(now.getDate()-now.getDay()-(i*7));
+        start=new Date(base);start.setDate(base.getDate()-base.getDay());start.setHours(0,0,0,0);
+        end=new Date(start);end.setDate(start.getDate()+6);end.setHours(23,59,59);
         label='Wk of '+(start.getMonth()+1)+'/'+start.getDate();
       } else if(unit==='month'){
         const d=new Date(now.getFullYear(),now.getMonth()-i,1);
@@ -1291,11 +1296,24 @@ function summaryV(){
         start=new Date(yr,0,1);end=new Date(yr,11,31,23,59,59);
         label=String(yr);
       }
+      // Skip periods entirely before business started
+      if(end<bizStart)continue;
+      // Clamp start to biz inception, clamp end to today (no future fixed costs)
+      const effectiveStart=start<bizStart?new Date(bizStart):new Date(start);
+      const effectiveEnd=end>now?new Date(now):new Date(end);
+      effectiveStart.setHours(0,0,0,0);
+      effectiveEnd.setHours(23,59,59);
       const ro=ordersInRange(start,end),re=expensesInRange(start,end);
       const rev=ro.reduce((s,o)=>s+n(o.revenue),0);
       const varC=ro.reduce((s,o)=>s+vc(o),0);
-      const days=Math.max(1,Math.round((end-start)/86400000));
-      const fixC=ro.length?days*getDayBurn(((start.getMonth()+1)+'/'+start.getDate()+'/'+start.getFullYear())):0;
+      // Walk each actual day to calculate fixed costs correctly
+      let fixC=0;
+      const cur=new Date(effectiveStart);
+      while(cur<=effectiveEnd){
+        const dstr=(cur.getMonth()+1)+'/'+cur.getDate()+'/'+cur.getFullYear();
+        fixC+=getDayBurn(dstr);
+        cur.setDate(cur.getDate()+1);
+      }
       const expC=re.reduce((s,x)=>s+n(x.amount),0);
       const net=rev-varC-fixC-expC;
       result.push({label,rev,varC,fixC,expC,net,orders:ro.length,start,end});
