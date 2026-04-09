@@ -504,11 +504,21 @@ function savePeriods(){try{localStorage.setItem('hpdc-periods',JSON.stringify(fc
 function saveCx(){try{localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));}catch(e){}}
 function saveFields(){try{localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));}catch(e){}}
 function saveSyncConf(){try{localStorage.setItem('hpdc-sync',JSON.stringify({enabled:syncConfig.enabled,binId:syncConfig.binId,apiKey:syncConfig.apiKey}));}catch(e){}}
-function stamp(){const el=document.getElementById('last-saved');if(el)el.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+function stamp(){const ts=Date.now();localStorage.setItem('hpdc-local-ts',ts);const el=document.getElementById('last-saved');if(el)el.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
 
 // ── CLOUD SYNC ────────────────────────────────────────────────────────────────
 function setSyncStatus(s,msg){const dot=document.getElementById('sync-dot'),txt=document.getElementById('sync-status');if(dot)dot.className='sync-dot sync-'+s;if(txt)txt.textContent=msg||s;}
-function getPayload(){return{orders,fcPeriods,customExpenses,dailyOverrides,dailyExpenses,fieldConfig,employees,_ts:Date.now()};}
+function getPayload(){
+  let versions=[];try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
+  const bg=localStorage.getItem('hpdc-bg')||null;
+  return{
+    orders,fcPeriods,customExpenses,dailyOverrides,dailyExpenses,fieldConfig,
+    employees,alertThreshold,coreReturnDays,emailTemplate,
+    reviewedOrders:[...reviewedOrders],
+    appPassword,versions,bg,
+    _ts:Date.now()
+  };
+}
 async function syncToCloud(){
   if(!syncConfig.enabled||!syncConfig.apiKey||!syncConfig.binId)return;
   setSyncStatus('busy','syncing…');
@@ -527,10 +537,25 @@ async function syncFromCloud(){
       if(rec.customExpenses)customExpenses=rec.customExpenses;if(rec.dailyOverrides)dailyOverrides=rec.dailyOverrides;
       if(rec.dailyExpenses)dailyExpenses=rec.dailyExpenses;if(rec.fieldConfig)fieldConfig=mergeFields(rec.fieldConfig);
       if(rec.employees)employees=rec.employees;
-      localStorage.setItem('hpdc-orders',JSON.stringify(orders));localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));
-      localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));
-      localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));
+      if(rec.alertThreshold!=null)alertThreshold=rec.alertThreshold;
+      if(rec.coreReturnDays!=null)coreReturnDays=rec.coreReturnDays;
+      if(rec.emailTemplate!=null)emailTemplate=rec.emailTemplate;
+      if(rec.reviewedOrders)reviewedOrders=new Set(rec.reviewedOrders);
+      localStorage.setItem('hpdc-orders',JSON.stringify(orders));
+      localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));
+      localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));
+      localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));
+      localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));
+      localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));
       if(rec.employees)localStorage.setItem('hpdc-emp',JSON.stringify(employees));
+      if(rec.alertThreshold!=null)localStorage.setItem('hpdc-at',rec.alertThreshold);
+      if(rec.coreReturnDays!=null)localStorage.setItem('hpdc-crd',rec.coreReturnDays);
+      if(rec.emailTemplate!=null)localStorage.setItem('hpdc-etpl',rec.emailTemplate);
+      if(rec.reviewedOrders)localStorage.setItem('hpdc-reviewed',JSON.stringify(rec.reviewedOrders));
+      if(rec.appPassword){appPassword=rec.appPassword;localStorage.setItem('hpdc-pass',rec.appPassword);}
+      if(rec.versions)localStorage.setItem('hpdc-versions',JSON.stringify(rec.versions));
+      if(rec.bg){localStorage.setItem('hpdc-bg',rec.bg);applyBg();}
+      else if(rec.bg===null){localStorage.removeItem('hpdc-bg');applyBg();}
     }
     setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));return true;
   }catch(e){setSyncStatus('err','sync failed');return false;}
@@ -544,7 +569,27 @@ async function createBin(){
 let syncPending=false;
 function scheduleSync(){if(syncPending)return;syncPending=true;setTimeout(()=>{syncPending=false;syncToCloud();},1500);}
 let syncTimer=null;
-function startAutoPoll(){if(syncTimer)clearInterval(syncTimer);if(!syncConfig.enabled)return;syncTimer=setInterval(async()=>{if(!document.hidden){const c=await syncFromCloud();if(c)render();}},90000);}
+function startAutoPoll(){
+  if(syncTimer)clearInterval(syncTimer);
+  if(!syncConfig.enabled)return;
+  syncTimer=setInterval(async()=>{
+    if(!document.hidden&&!syncPending){
+      // Only pull — never push on auto-poll (push happens on save)
+      // Check timestamp before applying to avoid overwriting newer local data
+      try{
+        const r=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}/latest`,{headers:{'X-Master-Key':syncConfig.apiKey}});
+        if(!r.ok)return;
+        const j=await r.json(),rec=j.record||j;
+        // Only apply if cloud is newer than our last local save
+        const localTs=parseInt(localStorage.getItem('hpdc-local-ts')||'0');
+        if(rec._ts&&rec._ts>localTs&&rec.orders){
+          const c=await syncFromCloud();
+          if(c)render();
+        }
+      }catch(e){}
+    }
+  },90000);
+}
 function exportData(){const b=new Blob([JSON.stringify(getPayload(),null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='hdpc-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
 function exportCSV(){
   const rows=[['Date','Order #','Description','Revenue',...fieldConfig.filter(f=>f.active).map(f=>f.label),'Return label','Gross margin']];
@@ -1941,7 +1986,7 @@ function settV(){
   <p style="font-size:11px;color:var(--text3);margin-top:6px">Current password is required to log in on any device. Make sure your managers know it.</p>`;
   const alertHtml=`<div class="fc-row" style="gap:10px;align-items:center;flex-wrap:wrap">
     <span style="font-size:13px;color:var(--text2)">Flag orders below</span>
-    <input type="number" class="inp-base" value="${alertThreshold}" style="width:70px" oninput="alertThreshold=parseFloat(this.value)||30;localStorage.setItem('hpdc-at',alertThreshold)">
+    <input type="number" class="inp-base" value="${alertThreshold}" style="width:70px" oninput="alertThreshold=parseFloat(this.value)||30;localStorage.setItem('hpdc-at',alertThreshold);scheduleSync()">
     <span style="font-size:13px;color:var(--text2)">% gross margin in red</span>
   </div>`;
   return`<div style="max-width:640px">
@@ -2029,7 +2074,7 @@ function settV(){
       <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.6">Set your return window. Cores outstanding beyond this many days are flagged as overdue. 90+ days triggers the warranty void option.</p>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <label style="font-size:13px;color:var(--text2)">Return window:</label>
-        <input type="number" class="inp-base" value="${coreReturnDays}" style="width:80px" min="1" max="365" oninput="coreReturnDays=parseInt(this.value)||30;localStorage.setItem('hpdc-crd',coreReturnDays)">
+        <input type="number" class="inp-base" value="${coreReturnDays}" style="width:80px" min="1" max="365" oninput="coreReturnDays=parseInt(this.value)||30;localStorage.setItem('hpdc-crd',coreReturnDays);scheduleSync()">
         <span style="font-size:13px;color:var(--text2)">days from fulfillment date</span>
       </div>
       <p style="font-size:11px;color:var(--text3);margin-top:6px">Currently: cores past <strong style="color:var(--text)">${coreReturnDays} days</strong> are flagged overdue. Cores past 90 days get the warranty void option.</p>
@@ -2042,7 +2087,7 @@ function settV(){
     <div class="ss"><div class="ss-title">Fixed cost audit</div>${buildAudit(dated,sortedP)}</div>
   </div>`;
 }
-function changePass(){const el=document.getElementById('new-pw');if(!el?.value){return;}appPassword=el.value;localStorage.setItem(PASS_KEY,appPassword);el.value='';alert('Password updated.');}
+function changePass(){const el=document.getElementById('new-pw');if(!el?.value){return;}appPassword=el.value;localStorage.setItem(PASS_KEY,appPassword);el.value='';scheduleSync();alert('Password updated and synced.');}
 function updPI(key,field,val){const item=newPeriodDraft?.items.find(x=>x.key===key);if(!item)return;item[field]=field==='amount'?parseFloat(val)||0:val;const rEl=document.getElementById(`pi-rate-${key}`);if(rEl)rEl.textContent=`${$$(getItemDailyRate(item),2)}/day`;const bEl=document.getElementById('pd-burn');if(bEl){const b=newPeriodDraft.items.reduce((s,x)=>s+getItemDailyRate(x),0);bEl.textContent=`${$$(b,2)}/day`;}}
 function addPI(){newPeriodDraft.items.push({key:'fc_'+uid(),name:'New item',amount:0,freq:'monthly'});render();}
 function removePI(key){if(newPeriodDraft.items.length<=1)return;newPeriodDraft.items=newPeriodDraft.items.filter(x=>x.key!==key);render();}
@@ -2116,7 +2161,7 @@ function removeEmployee(id){
   employees=employees.filter(e=>e.id!==id);
   saveEmployees();render();
 }
-function saveEmailTemplate(v){emailTemplate=v;localStorage.setItem('hpdc-etpl',v);}
+function saveEmailTemplate(v){emailTemplate=v;localStorage.setItem('hpdc-etpl',v);scheduleSync();}
 function resetEmailTemplate(){emailTemplate="Please drop the core off at any UPS location at your earliest convenience.\n\nThank you for your business!\nHeavy Duty Parts Company";localStorage.setItem('hpdc-etpl',emailTemplate);const el=document.getElementById('email-tpl-inp');if(el)el.value=emailTemplate;}
 function autoSaveVersion(){
   // Silent version save — no alert, used for automatic backups
@@ -2144,6 +2189,8 @@ function autoSaveVersion(){
   localStorage.setItem('hpdc-esb','0');
 }
 function saveVersion(){
+  // sync triggered after save
+  var _origSave=true;
   const snap={
     _ts:Date.now(),
     _label:new Date().toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'}),
@@ -2159,6 +2206,7 @@ function saveVersion(){
   versions.unshift(snap);
   if(versions.length>10)versions=versions.slice(0,10); // keep 10 versions
   localStorage.setItem('hpdc-versions',JSON.stringify(versions));
+  scheduleSync();
   if(view==='settings')render();
   alert('Version saved: '+snap._label);
 }
@@ -2183,6 +2231,7 @@ function deleteVersion(ts){
   try{const v=localStorage.getItem('hpdc-versions');if(v)versions=JSON.parse(v);}catch(e){}
   versions=versions.filter(v=>v._ts!==ts);
   localStorage.setItem('hpdc-versions',JSON.stringify(versions));
+  scheduleSync();
   if(view==='settings')render();
 }
 function clearAllData(){pushUndo();orders=[];dailyExpenses=[];dailyOverrides={};saveAll();render();}
@@ -2226,11 +2275,11 @@ function uploadBg(){
   inp.onchange=e=>{
     const file=e.target.files[0];if(!file)return;
     const reader=new FileReader();
-    reader.onload=ev=>{localStorage.setItem('hpdc-bg',ev.target.result);applyBg();if(view==='settings')render();};
+    reader.onload=ev=>{localStorage.setItem('hpdc-bg',ev.target.result);applyBg();scheduleSync();if(view==='settings')render();};
     reader.readAsDataURL(file);
   };inp.click();
 }
-function removeBg(){localStorage.removeItem('hpdc-bg');applyBg();if(view==='settings')render();}
+function removeBg(){localStorage.removeItem('hpdc-bg');applyBg();scheduleSync();if(view==='settings')render();}
 loadData();
 applyBg();
 if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId){syncFromCloud().then(c=>{if(c)render();startAutoPoll();});}
