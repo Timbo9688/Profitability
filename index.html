@@ -479,13 +479,13 @@ function mergeFields(saved){
 }
 function saveAll(){
   try{localStorage.setItem('hpdc-orders',JSON.stringify(orders));localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));localStorage.setItem('hpdc-reviewed',JSON.stringify([...reviewedOrders]));stamp();}catch(e){}
-  if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId)scheduleSync();
+  if(syncConfig.enabled&&syncConfig.scriptUrl)scheduleSync();
 }
 function savePeriods(){try{localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}catch(e){}}
 function saveBurnRates(){
   try{
     localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));
-    if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId)scheduleSync();
+    if(syncConfig.enabled&&syncConfig.scriptUrl)scheduleSync();
   }catch(e){}
 }
 function getEffectiveBurn(dateStr){
@@ -510,73 +510,48 @@ function getPayload(){
     reviewedOrders:[...reviewedOrders],appPassword,versions,bg,_ts:Date.now()};
 }
 async function syncToCloud(){
-  if(!syncConfig.enabled||!syncConfig.apiKey||!syncConfig.binId)return;
+  if(!syncConfig.enabled||!syncConfig.scriptUrl)return;
   setSyncStatus('busy','syncing…');
   try{
-    // Pull latest from cloud first, merge orders so no data is lost
-    const pullRes=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}/latest`,{headers:{'X-Master-Key':syncConfig.apiKey}});
+    // Pull first, merge, then push
+    const pullRes=await fetch(syncConfig.scriptUrl);
     if(pullRes.ok){
-      const j=await pullRes.json(),rec=j.record||j;
+      const rec=await pullRes.json();
       if(rec.orders&&Array.isArray(rec.orders)){
-        // Merge: combine local and cloud orders, keeping the newer version of each
         const cloudMap={};rec.orders.forEach(o=>cloudMap[o.id]=o);
         const localMap={};orders.forEach(o=>localMap[o.id]=o);
         const allIds=new Set([...Object.keys(cloudMap),...Object.keys(localMap)]);
         const merged=[];
         allIds.forEach(id=>{
           const local=localMap[id],cloud=cloudMap[id];
-          if(!cloud)merged.push(local); // local only → keep
-          else if(!local)merged.push(cloud); // cloud only → keep
-          else{
-            // both exist → keep whichever was updated more recently
-            const lt=local._updated||0,ct=cloud._updated||0;
-            merged.push(lt>=ct?local:cloud);
-          }
+          if(!cloud)merged.push(local);
+          else if(!local)merged.push(cloud);
+          else{const lt=local._updated||0,ct=cloud._updated||0;merged.push(lt>=ct?local:cloud);}
         });
         merged.sort((a,b)=>pd(b.date)-pd(a.date));
         orders=merged;
         localStorage.setItem('hpdc-orders',JSON.stringify(orders));
-        // Also merge burnRates — keep all unique rates
         if(rec.burnRates&&Array.isArray(rec.burnRates)){
-          const localBurnIds=new Set(burnRates.map(r=>r.id));
-          const cloudBurnOnly=rec.burnRates.filter(r=>!localBurnIds.has(r.id));
-          if(cloudBurnOnly.length){
-            burnRates=[...burnRates,...cloudBurnOnly];
-            burnRates.sort((a,b)=>pd(b.effectiveDate)-pd(a.effectiveDate));
-            localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));
-          }
+          const ids=new Set(burnRates.map(r=>r.id));
+          const extra=rec.burnRates.filter(r=>!ids.has(r.id));
+          if(extra.length){burnRates=[...burnRates,...extra];burnRates.sort((a,b)=>pd(b.effectiveDate)-pd(a.effectiveDate));localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));}
         }
-        // Also merge employees
         if(rec.employees&&Array.isArray(rec.employees)){
-          const localEmpIds=new Set(employees.map(e=>e.id));
-          const cloudEmpOnly=rec.employees.filter(e=>!localEmpIds.has(e.id));
-          if(cloudEmpOnly.length){
-            employees=[...employees,...cloudEmpOnly];
-            localStorage.setItem('hpdc-emp',JSON.stringify(employees));
-          }
+          const ids=new Set(employees.map(e=>e.id));
+          const extra=rec.employees.filter(e=>!ids.has(e.id));
+          if(extra.length){employees=[...employees,...extra];localStorage.setItem('hpdc-emp',JSON.stringify(employees));}
         }
-        // Also merge dailyExpenses
         if(rec.dailyExpenses&&Array.isArray(rec.dailyExpenses)){
-          const localExpIds=new Set(dailyExpenses.map(x=>x.id));
-          const cloudExpOnly=rec.dailyExpenses.filter(x=>!localExpIds.has(x.id));
-          if(cloudExpOnly.length){
-            dailyExpenses=[...dailyExpenses,...cloudExpOnly];
-            localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));
-          }
+          const ids=new Set(dailyExpenses.map(x=>x.id));
+          const extra=rec.dailyExpenses.filter(x=>!ids.has(x.id));
+          if(extra.length){dailyExpenses=[...dailyExpenses,...extra];localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));}
         }
       }
     }
-    // Now push the merged payload
-    const pushRes=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}`,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':syncConfig.apiKey},body:JSON.stringify(getPayload())});
-    if(!pushRes.ok){
-      const status=pushRes.status;
-      if(status===401||status===403)setSyncStatus('err','auth error — check API key');
-      else if(status===429)setSyncStatus('err','rate limited — try again soon');
-      else setSyncStatus('err','push failed ('+status+')');
-      return;
-    }
+    const pushRes=await fetch(syncConfig.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(getPayload())});
+    if(!pushRes.ok){setSyncStatus('err','push failed ('+pushRes.status+')');return;}
     setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
-  }catch(e){setSyncStatus('err','network error');}
+  }catch(e){setSyncStatus('err','error: '+e.message);}
 }
 async function syncFromCloud(){
   if(!syncConfig.enabled||!syncConfig.scriptUrl)return false;
@@ -2219,7 +2194,7 @@ function useBurnCalc(){
   const inp=document.getElementById('new-burn-amt');
   if(inp){inp.value=amt.toFixed(2);inp.focus();}
 }
-function saveEmployees(){localStorage.setItem('hpdc-emp',JSON.stringify(employees));if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId)scheduleSync();}
+function saveEmployees(){localStorage.setItem('hpdc-emp',JSON.stringify(employees));if(syncConfig.enabled&&syncConfig.scriptUrl)scheduleSync();}
 function addEmployee(){
   const name=(document.getElementById('new-emp-name')?.value||'').trim();
   const role=(document.getElementById('new-emp-role')?.value||'').trim();
@@ -2264,7 +2239,7 @@ function uploadBg(){
 function removeBg(){localStorage.removeItem('hpdc-bg');applyBg();if(view==='settings')render();}
 loadData();
 applyBg();
-if(syncConfig.enabled&&syncConfig.apiKey&&syncConfig.binId){syncFromCloud().then(c=>{if(c)render();startAutoPoll();});}
+if(syncConfig.enabled&&syncConfig.scriptUrl){syncFromCloud().then(c=>{if(c)render();startAutoPoll();});}
 else{render();}
 
 // ── DOOM ─────────────────────────────────────────────────────────────────────
