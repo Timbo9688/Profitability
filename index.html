@@ -1472,14 +1472,14 @@ function entryV(){
       ${fg('customerEmail','Customer email (optional)',f.customerEmail||'','email')}
     </div>
     ${retSec()}
-    <div class="fg" style="margin-top:12px"><label>Notes</label><input type="text" id="f-notes" value="${e(f.notes||'')}placeholder="Any notes…" oninput="fi('notes',this.value)"></div>
+    <div class="fg" style="margin-top:12px"><label>Notes</label><input type="text" id="f-notes" value="${e(f.notes||'')}" placeholder="Any notes…" oninput="fi('notes',this.value)"></div>
     <div style="margin-top:18px;display:flex;gap:10px">
       <button class="btn-p" onclick="submitEntry()">${editId?'Save changes':'Add entry'}</button>
       <button class="btn-g" onclick="cancelEntry()">Cancel</button>
     </div>
   </div>`;
 }
-function fg(id,lbl,val,type='number'){return`<div class="fg"><label>${lbl}</label><input type="${type}" id="f-${id}" value="${e(val||'')} " placeholder="0" oninput="fi('${id}',this.value)"></div>`;}
+function fg(id,lbl,val,type='number'){return`<div class="fg"><label>${lbl}</label><input type="${type}" id="f-${id}" value="${e(val??'')}" placeholder="0" oninput="fi('${id}',this.value)"></div>`;}
 function retSec(){
   const tNums=f.trackingNumbers||[];
   const trackInputs=tNums.map((t,i)=>`
