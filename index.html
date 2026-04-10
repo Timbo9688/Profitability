@@ -568,10 +568,15 @@ async function syncToCloud(){
     }
     // Now push the merged payload
     const pushRes=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}`,{method:'PUT',headers:{'Content-Type':'application/json','X-Master-Key':syncConfig.apiKey},body:JSON.stringify(getPayload())});
-    if(!pushRes.ok)throw new Error(pushRes.status);
-    stamp();
+    if(!pushRes.ok){
+      const status=pushRes.status;
+      if(status===401||status===403)setSyncStatus('err','auth error — check API key');
+      else if(status===429)setSyncStatus('err','rate limited — try again soon');
+      else setSyncStatus('err','push failed ('+status+')');
+      return;
+    }
     setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
-  }catch(e){setSyncStatus('err','sync failed');}
+  }catch(e){setSyncStatus('err','network error');}
 }
 async function syncFromCloud(){
   if(!syncConfig.enabled||!syncConfig.apiKey||!syncConfig.binId)return false;
@@ -623,14 +628,19 @@ function startAutoPoll(){
         const r=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}/latest`,{headers:{'X-Master-Key':syncConfig.apiKey}});
         if(!r.ok)return;
         const j=await r.json(),rec=j.record||j;
-        const localTs=parseInt(localStorage.getItem('hpdc-local-ts')||'0');
-        if(rec._ts&&rec._ts>localTs&&rec.orders){
+        // Use order count + dailyExpenses count as change indicator — not clock time
+        // This avoids issues with clocks being out of sync between devices
+        const cloudOrderCount=(rec.orders||[]).length;
+        const cloudExpCount=(rec.dailyExpenses||[]).length;
+        const localOrderCount=orders.length;
+        const localExpCount=dailyExpenses.length;
+        if(cloudOrderCount!==localOrderCount||cloudExpCount!==localExpCount){
           const changed=await syncFromCloud();
           if(changed)render();
         }
       }catch(ex){}
     }
-  },90000);
+  },60000);
 }
 function exportData(){const b=new Blob([JSON.stringify(getPayload(),null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='hdpc-'+new Date().toISOString().slice(0,10)+'.json';a.click();}
 function exportCSV(){
