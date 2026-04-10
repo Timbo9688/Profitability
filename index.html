@@ -518,14 +518,24 @@ async function syncToCloud(){
     if(pullRes.ok){
       const j=await pullRes.json(),rec=j.record||j;
       if(rec.orders&&Array.isArray(rec.orders)){
-        // Merge: keep all orders from cloud that aren't in local (by id)
-        const localIds=new Set(orders.map(o=>o.id));
-        const cloudOnly=rec.orders.filter(o=>!localIds.has(o.id));
-        if(cloudOnly.length){
-          orders=[...orders,...cloudOnly];
-          orders.sort((a,b)=>pd(b.date)-pd(a.date));
-          localStorage.setItem('hpdc-orders',JSON.stringify(orders));
-        }
+        // Merge: combine local and cloud orders, keeping the newer version of each
+        const cloudMap={};rec.orders.forEach(o=>cloudMap[o.id]=o);
+        const localMap={};orders.forEach(o=>localMap[o.id]=o);
+        const allIds=new Set([...Object.keys(cloudMap),...Object.keys(localMap)]);
+        const merged=[];
+        allIds.forEach(id=>{
+          const local=localMap[id],cloud=cloudMap[id];
+          if(!cloud)merged.push(local); // local only → keep
+          else if(!local)merged.push(cloud); // cloud only → keep
+          else{
+            // both exist → keep whichever was updated more recently
+            const lt=local._updated||0,ct=cloud._updated||0;
+            merged.push(lt>=ct?local:cloud);
+          }
+        });
+        merged.sort((a,b)=>pd(b.date)-pd(a.date));
+        orders=merged;
+        localStorage.setItem('hpdc-orders',JSON.stringify(orders));
         // Also merge burnRates — keep all unique rates
         if(rec.burnRates&&Array.isArray(rec.burnRates)){
           const localBurnIds=new Set(burnRates.map(r=>r.id));
@@ -1080,6 +1090,10 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
       </div>
     </div>
     ${isOpen?`
+    <div style="padding:6px 14px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <button class="btn-p" style="font-size:12px;padding:5px 14px" onclick="event.stopPropagation();addForDate('${date}')">+ New order</button>
+      <span style="font-size:11px;color:var(--text3)">Date pre-fills as ${date} — change it in the form if needed</span>
+    </div>
     <div class="day-orders">${ordHdr}${ordRows}</div>
     ${expSection}
     <div class="day-fc">
@@ -2436,6 +2450,10 @@ function buildDaySection({date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet}){
       </div>
     </div>
     ${isOpen?`
+    <div style="padding:6px 14px;background:var(--bg2);border-top:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <button class="btn-p" style="font-size:12px;padding:5px 14px" onclick="event.stopPropagation();addForDate('${date}')">+ New order</button>
+      <span style="font-size:11px;color:var(--text3)">Date pre-fills as ${date} — change it in the form if needed</span>
+    </div>
     <div class="day-orders">${ordHdr}${ordRows}</div>
     ${expSection}
     <div class="day-fc">
