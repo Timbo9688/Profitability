@@ -356,7 +356,7 @@ if(sessionStorage.getItem('hpdc-unlocked')){
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
 let orders=[], fcPeriods=[], customExpenses=[], dailyOverrides={};
-let dailyExpenses=[], fieldConfig=[], syncConfig={enabled:false,apiKey:'',binId:''};
+let dailyExpenses=[], fieldConfig=[], syncConfig={enabled:false,scriptUrl:''};
 let burnRates=[]; // [{id,effectiveDate,dailyTotal,note}]
 let employees=[]; // [{id,name,role,active}]
 let undoStack=[], alertThreshold=30;
@@ -440,7 +440,7 @@ function loadData(){
     if(dv) dailyOverrides=dv;
     if(de) dailyExpenses=de;
     fieldConfig=fc?mergeFields(fc):[...DEFAULT_FIELDS];
-    if(sc) syncConfig={...syncConfig,...sc};
+    if(sc){syncConfig={...syncConfig,...sc};if(sc.scriptUrl)syncConfig.enabled=!!sc.scriptUrl;}
     if(at!=null) alertThreshold=at;
     const emp_=g('hpdc-emp');if(emp_)employees=emp_;
     const br_=g('hpdc-burn');
@@ -497,7 +497,7 @@ function getEffectiveBurn(dateStr){
 }
 function saveCx(){try{localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));}catch(e){}}
 function saveFields(){try{localStorage.setItem('hpdc-fields',JSON.stringify(fieldConfig));}catch(e){}}
-function saveSyncConf(){try{localStorage.setItem('hpdc-sync',JSON.stringify({enabled:syncConfig.enabled,binId:syncConfig.binId,apiKey:syncConfig.apiKey}));}catch(e){}}
+function saveSyncConf(){try{localStorage.setItem('hpdc-sync',JSON.stringify({enabled:syncConfig.enabled,scriptUrl:syncConfig.scriptUrl}));}catch(e){}}
 function stamp(){const ts=Date.now();localStorage.setItem('hpdc-local-ts',ts);const el=document.getElementById('last-saved');if(el)el.textContent='Saved '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
 
 // ── CLOUD SYNC ────────────────────────────────────────────────────────────────
@@ -579,12 +579,12 @@ async function syncToCloud(){
   }catch(e){setSyncStatus('err','network error');}
 }
 async function syncFromCloud(){
-  if(!syncConfig.enabled||!syncConfig.apiKey||!syncConfig.binId)return false;
+  if(!syncConfig.enabled||!syncConfig.scriptUrl)return false;
   setSyncStatus('busy','fetching…');
   try{
-    const r=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}/latest`,{headers:{'X-Master-Key':syncConfig.apiKey}});
+    const r=await fetch(syncConfig.scriptUrl);
     if(!r.ok)throw new Error(r.status);
-    const j=await r.json(),rec=j.record||j;
+    const rec=await r.json();
     if(rec._ts&&rec.orders){
       // Orders + costs
       if(rec.orders){orders=rec.orders;localStorage.setItem('hpdc-orders',JSON.stringify(orders));}
@@ -610,24 +610,30 @@ async function syncFromCloud(){
     setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));return true;
   }catch(e){setSyncStatus('err','sync failed');return false;}
 }
-async function createBin(){
-  if(!syncConfig.apiKey){alert('Enter your API key first.');return;}
-  setSyncStatus('busy','creating…');
-  try{const r=await fetch('https://api.jsonbin.io/v3/b',{method:'POST',headers:{'Content-Type':'application/json','X-Master-Key':syncConfig.apiKey,'X-Bin-Name':'HDPC Tracker'},body:JSON.stringify(getPayload())});if(!r.ok)throw new Error(r.status);const j=await r.json();syncConfig.binId=j.metadata?.id||'';syncConfig.enabled=true;saveSyncConf();render();setSyncStatus('ok','created');alert('Bin created! ID: '+syncConfig.binId+'\nSave this and share with your team.');}
-  catch(e){setSyncStatus('err','failed: '+e.message);}
+async function testScript(){
+  if(!syncConfig.scriptUrl){alert('Paste your Google Apps Script URL first.');return;}
+  setSyncStatus('busy','testing…');
+  try{
+    const r=await fetch(syncConfig.scriptUrl);
+    if(!r.ok)throw new Error(r.status);
+    const data=await r.json();
+    syncConfig.enabled=true;saveSyncConf();
+    setSyncStatus('ok','connected');
+    alert('Google Drive sync connected! Push your data now.');
+  }catch(e){setSyncStatus('err','failed: '+e.message);alert('Could not connect. Make sure the script is deployed as a web app with Anyone access.');}
 }
 let syncPending=false;
 function scheduleSync(){if(syncPending)return;syncPending=true;setTimeout(()=>{syncPending=false;syncToCloud();},1500);}
 let syncTimer=null;
 function startAutoPoll(){
   if(syncTimer)clearInterval(syncTimer);
-  if(!syncConfig.enabled)return;
+  if(!syncConfig.enabled||!syncConfig.scriptUrl)return;
   syncTimer=setInterval(async()=>{
     if(!document.hidden&&!syncPending){
       try{
-        const r=await fetch(`https://api.jsonbin.io/v3/b/${syncConfig.binId}/latest`,{headers:{'X-Master-Key':syncConfig.apiKey}});
+        const r=await fetch(syncConfig.scriptUrl);
         if(!r.ok)return;
-        const j=await r.json(),rec=j.record||j;
+        const rec=await r.json();
         // Use order count + dailyExpenses count as change indicator — not clock time
         // This avoids issues with clocks being out of sync between devices
         const cloudOrderCount=(rec.orders||[]).length;
@@ -1963,7 +1969,27 @@ function settV(){
   const periodHistory=sortedP.map((p,i)=>{const isCur=i===0;const burn=p.items.reduce((s,x)=>s+getItemDailyRate(x),0);return`<div class="period-item${isCur?' cur':''}" ><div class="period-top"><div><span style="font-weight:700;font-family:var(--font-head)">${p.effectiveDate}</span>${p.note?` <span style="font-size:12px;color:var(--text3)">— ${e(p.note)}</span>`:''}</div><div class="fc-row" style="gap:6px">${isCur?'<span class="cur-badge">CURRENT</span>':''} ${fcPeriods.length>1?`<button class="btn-d" onclick="delPeriod('${p.id}')">delete</button>`:''}</div></div><div class="period-items-list">${p.items.map(x=>`<div>${e(x.name)}: <span>${$$(x.amount,0)}/${x.freq==='daily'?'day':x.freq==='weekly'?'wk':'mo'}</span></div>`).join('')} <div>→ <span class="co">${$$(burn,2)}/day</span></div></div></div>`;}).join('');
   const cxHtml=customExpenses.map(x=>{const isE=x.endDate&&pd(x.endDate)<new Date();return`<div class="cx-card${isE?' ended':''}" ><div class="cx-edit-grid"><div class="cx-field"><label>Name</label><input type="text" value="${e(x.name)}" oninput="cxUp('${x.id}','name',this.value)"></div><div class="cx-field"><label>Amount ($)</label><input type="number" value="${x.amount}" oninput="cxUp('${x.id}','amount',this.value)"></div><div class="cx-field"><label>Frequency</label><select onchange="cxUp('${x.id}','freq',this.value)"><option value="daily" ${x.freq==='daily'?'selected':''}>/ day</option><option value="weekly" ${x.freq==='weekly'?'selected':''}>/ week</option><option value="monthly" ${x.freq==='monthly'?'selected':''}>/ month</option><option value="onetime" ${x.freq==='onetime'?'selected':''}>one-time</option></select></div><div class="cx-field"><label>Start date</label><input type="text" value="${x.startDate}" placeholder="MM/DD/YYYY" oninput="cxUp('${x.id}','startDate',this.value)"></div><div class="cx-field"><label>End date (blank = active)</label><input type="text" value="${x.endDate||''}" placeholder="MM/DD/YYYY" oninput="cxUp('${x.id}','endDate',this.value||null)"></div><div class="cx-field" style="align-self:flex-end"><label style="opacity:0">.</label><button class="btn-d" style="padding:8px 14px;font-size:13px;border-radius:var(--r);border:1px solid rgba(204,0,0,.4)" onclick="delCx('${x.id}')">Remove</button></div></div><div style="font-size:11px;color:var(--text3);margin-top:4px">${isE?`Ended ${x.endDate}`:`Active from ${x.startDate}${x.endDate?' to '+x.endDate:''}`}</div></div>`;}).join('');
   const fieldHtml=`<div style="border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:12px">${fieldConfig.map(f=>`<div class="fc-config-row"><input type="checkbox" ${f.active?'checked':''} onchange="toggleFieldActive('${f.id}',this.checked)" style="accent-color:var(--red)"><span style="font-size:10px;color:var(--text3);width:60px;flex-shrink:0;text-transform:uppercase;letter-spacing:.3px">${f.builtin?'built-in':'custom'}</span><input class="fc-lbl-inp" type="text" value="${e(f.label)}" oninput="updateFieldLabel('${f.id}',this.value)">${!f.builtin?`<button class="btn-d" onclick="removeCustomField('${f.id}')">remove</button>`:`<span style="width:52px"></span>`}</div>`).join('')}</div><button class="btn-g" onclick="addCustomField()">+ Add field</button>`;
-  const syncHtml=`<div class="sync-box"><div style="font-family:var(--font-head);font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">JSONBin.io cloud sync</div><div class="alert alert-info" style="margin-bottom:12px;font-size:12px">Create a free account at <a href="https://jsonbin.io" target="_blank" style="color:var(--blue)">jsonbin.io</a> → copy API key → paste below → click Create. Share Bin ID with team. Syncs every save + every 90 seconds.</div><div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">API key</div><input type="password" class="sync-inp" value="${syncConfig.apiKey}" placeholder="$2b$10$..." oninput="syncConfig.apiKey=this.value;saveSyncConf();"></div><div style="margin-bottom:10px"><div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Bin ID</div><input type="text" class="sync-inp" value="${syncConfig.binId}" placeholder="paste from jsonbin.io" oninput="syncConfig.binId=this.value;syncConfig.enabled=!!this.value;saveSyncConf();"></div><div class="fc-row" style="gap:8px;flex-wrap:wrap"><button class="btn-p" style="font-size:12px;padding:8px 16px" onclick="createBin()">Create new bin</button><button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="syncToCloud()">Push now</button><button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="syncFromCloud().then(c=>{if(c)render();})">Pull now</button></div>${syncConfig.enabled?`<div style="font-size:11px;color:var(--green);margin-top:8px">✓ Sync enabled — bin: ${syncConfig.binId}</div>`:`<div style="font-size:11px;color:var(--text3);margin-top:8px">Not configured yet.</div>`}</div>`;
+  const syncHtml=`<div class="sync-box">
+  <div style="font-family:var(--font-head);font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Google Drive sync</div>
+  <div class="alert alert-info" style="margin-bottom:12px;font-size:12px;line-height:1.6">
+    <strong>Setup (one time):</strong><br>
+    1. Go to <a href="https://script.google.com" target="_blank" style="color:var(--blue)">script.google.com</a> → New project<br>
+    2. Paste the Apps Script code (from the GitHub repo README or ask for it)<br>
+    3. Click <strong>Deploy → New deployment → Web app</strong><br>
+    4. Set <strong>Execute as: Me</strong> and <strong>Who has access: Anyone</strong><br>
+    5. Click Deploy → copy the URL → paste below
+  </div>
+  <div style="margin-bottom:12px">
+    <div style="font-size:11px;color:var(--text3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px">Google Apps Script URL</div>
+    <input type="text" class="sync-inp" value="${syncConfig.scriptUrl||''}" placeholder="https://script.google.com/macros/s/..." oninput="syncConfig.scriptUrl=this.value.trim();syncConfig.enabled=!!this.value.trim();saveSyncConf();">
+  </div>
+  <div class="fc-row" style="gap:8px;flex-wrap:wrap">
+    <button class="btn-p" style="font-size:12px;padding:8px 16px" onclick="testScript()">Test connection</button>
+    <button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="syncToCloud()">⬆ Push to cloud</button>
+    <button class="btn-g" style="font-size:12px;padding:8px 16px" onclick="syncFromCloud().then(c=>{if(c)render();})">⬇ Pull from cloud</button>
+  </div>
+  ${syncConfig.enabled?'<div style="font-size:11px;color:var(--green);margin-top:8px">✓ Google Drive sync enabled</div>':'<div style="font-size:11px;color:var(--text3);margin-top:8px">Not configured yet — paste your script URL above.</div>'}
+</div>`;
   // Password change
   const pwHtml=`<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
     <div class="fg" style="flex:1"><label>New password</label><input type="password" id="new-pw" placeholder="Enter new password"></div>
