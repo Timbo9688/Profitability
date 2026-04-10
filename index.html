@@ -440,7 +440,7 @@ function loadData(){
     if(dv) dailyOverrides=dv;
     if(de) dailyExpenses=de;
     fieldConfig=fc?mergeFields(fc):[...DEFAULT_FIELDS];
-    if(sc){syncConfig={...syncConfig,...sc};if(sc.scriptUrl)syncConfig.enabled=!!sc.scriptUrl;}
+    if(sc){syncConfig={...syncConfig,...sc};syncConfig.enabled=!!(sc.scriptUrl||sc.binId);}
     if(at!=null) alertThreshold=at;
     const emp_=g('hpdc-emp');if(emp_)employees=emp_;
     const br_=g('hpdc-burn');
@@ -510,7 +510,8 @@ function getPayload(){
     reviewedOrders:[...reviewedOrders],appPassword,versions,bg,_ts:Date.now()};
 }
 async function syncToCloud(){
-  if(!syncConfig.enabled||!syncConfig.scriptUrl)return;
+  if(!syncConfig.scriptUrl){setSyncStatus('err','no script URL');alert('Paste your Google Apps Script URL in Settings → Cloud sync.');return;}
+  syncConfig.enabled=true;saveSyncConf();
   setSyncStatus('busy','syncing…');
   try{
     // Pull first, merge, then push
@@ -598,7 +599,7 @@ async function testScript(){
   }catch(e){setSyncStatus('err','failed: '+e.message);alert('Could not connect. Make sure the script is deployed as a web app with Anyone access.');}
 }
 let syncPending=false;
-function scheduleSync(){if(syncPending)return;syncPending=true;setTimeout(()=>{syncPending=false;syncToCloud();},1500);}
+function scheduleSync(){if(!syncConfig.scriptUrl)return;if(syncPending)return;syncPending=true;setTimeout(()=>{syncPending=false;syncToCloud();},1500);}
 let syncTimer=null;
 function startAutoPoll(){
   if(syncTimer)clearInterval(syncTimer);
