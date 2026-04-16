@@ -275,6 +275,10 @@ tbody td{padding:7px 8px;}
 
 
 
+
+
+
+
 </style>
 </head>
 <body>
@@ -635,6 +639,7 @@ function importData(){const i=document.createElement('input');i.type='file';i.ac
 
 // ── DATE HELPERS ──────────────────────────────────────────────────────────────
 function pd(s){if(!s)return new Date(2000,0,1);const p=s.split('/').map(Number);return p.length===3?new Date(p[2],p[0]-1,p[1]):new Date(new Date().getFullYear(),p[0]-1,p[1]);}
+function normDateStr(s){if(!s)return s;const d=pd(s);if(!d||isNaN(d.getTime()))return s;return(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear();}
 function dateRanges(){
   const n=new Date(),y=n.getFullYear(),mo=n.getMonth(),da=n.getDate(),dow=n.getDay();
   const wkS=new Date(y,mo,da-(dow===0?6:dow-1));const wkE=new Date(wkS);wkE.setDate(wkS.getDate()+6);
@@ -695,7 +700,7 @@ function e(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 const $$=(v,d=0)=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:d,maximumFractionDigits:d}).format(v);
 const cc=v=>v>=0?'cg':'cr';
 const pct=v=>v.toFixed(1)+'%';
-function byDate(){const m={};orders.forEach(o=>{if(!m[o.date])m[o.date]=[];m[o.date].push(o);});return Object.entries(m).sort(([a],[b])=>pd(a)-pd(b));}
+function byDate(){const m={};orders.forEach(o=>{const nd=normDateStr(o.date)||o.date;if(!m[nd])m[nd]=[];m[nd].push(o);});return Object.entries(m).sort(([a],[b])=>pd(a)-pd(b));}
 function totals(){
   const rev=orders.reduce((s,o)=>s+n(o.revenue),0),vc_=orders.reduce((s,o)=>s+vc(o),0);
   const dated=byDate();
@@ -931,7 +936,7 @@ function dailyV(){
   let r=0;
   if(allDated.length){
     const ordMap={};
-    allDated.forEach(([date,dayOrders])=>{ordMap[date]=dayOrders;});
+    allDated.forEach(([date,dayOrders])=>{ordMap[normDateStr(date)]=dayOrders;});
     const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
     const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
     bizStart.setHours(0,0,0,0);
@@ -953,7 +958,7 @@ function dailyV(){
   const dayData=(isFiltered?filteredDated:allDated).map(([date,dayOrders])=>{
     const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
     const dBurn=getDayBurn(date),dExpT=getDayExpTotal(date),dNet=dRev-dVc-dBurn-dExpT;
-    return{date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet:fullRnet[date]||0,isFiltered};
+    return{date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet:fullRnet[normDateStr(date)]||0,isFiltered};
   });
 
   // Auto-expand most recent day if nothing is expanded yet
@@ -1597,7 +1602,7 @@ function labelsV(){
       ${filterBtn('Overdue','overdue',overdue.length,true)}
       ${filterBtn('Returned','returned',allReturned.length)}
       <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
-        ${(()=>{const allPendingNums=allPending.reduce((s,o)=>{const rn=o.returnedNums||[];return s+(o.trackingNumbers||[]).filter(t=>t.trim()&&!rn.includes(t)).length;},0);return allPendingNums>0?`<button class="btn-g" style="font-size:11px;padding:5px 12px;white-space:nowrap" onclick="checkAllTracking(true)">↗ Track all ${allPendingNums} pending</button>`:''})()}
+
         <input type="text" id="core-search-inp" class="inp-base" value="${e(coreSearch)}" placeholder="Search order #, description, tracking #…" style="min-width:200px;padding:6px 10px;font-size:12px" onkeydown="if(event.key==='Enter')runCoreSearch()">
         <button class="btn-p" style="padding:6px 14px;font-size:12px" onclick="runCoreSearch()">Search</button>
         ${isFiltered?`<button class="btn-s" onclick="clearCoreSearch()">✕</button>`:''}
@@ -1621,100 +1626,52 @@ function labelsV(){
   else if(coreFilter==='returned') viewOrders=allReturned.filter(matchesFilter);
   else viewOrders=wl.filter(matchesFilter);
 
-  // ── Aging Core Report ──
-  const aging=(coreFilter==='returned'?[]:overdue).filter(o=>matchesFilter(o)).sort((a,b)=>daysAged(b.date)-daysAged(a.date));
-  if(aging.length){
-    html+=`<div class="alert alert-red" style="margin-bottom:8px">
-      ⚠ <strong>${aging.length} aging core${aging.length>1?'s':''}</strong> — label sent 45+ days ago with no return. These need immediate follow-up.
-    </div>`;
-    html+=`<div style="font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">Aging cores (45+ days)</div>`;
-
-    html+=`<div style="display:flex;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;padding:6px 14px;background:var(--bg2);border-bottom:1px solid var(--border);gap:8px">
-      <span style="flex:0 0 60px">Date</span>
-      <span style="flex:0 0 70px">Order #</span>
-      <span style="flex:1">Description</span>
-      <span style="flex:0 0 100px;text-align:center">Status</span>
-      <span style="flex:0 0 130px"></span>
-    </div>`;
-    aging.forEach(o=>{
-      const days=daysAged(o.date);
-      const severity=days>=90?'#f87171':days>=60?'#fb923c':'#fbbf24';
-      const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
-      const rn=o.returnedNums||[];
-      const showEmail=showEmailFor.has(o.id);
-      const emailLines=buildEmailLines(o);
-
-      // Build per-number track rows
-      const trackRows=tNums.length
-        ? tNums.map(t=>{
-            const ret=rn.includes(t);
-            return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">
-              <input type="checkbox" ${ret?'checked':''} data-oid="${o.id}" data-trk="${t}" onchange="handleTrackChk(this)" style="accent-color:var(--green);width:13px;height:13px;cursor:pointer;flex-shrink:0">
-              <span style="font-family:monospace;font-size:11px;color:var(--text2);flex:1">${e(t)}</span>
-              <span style="font-size:10px;font-weight:600;color:${ret?'var(--green)':'var(--amber)'};white-space:nowrap;min-width:54px;text-align:right">${ret?'✓ returned':'pending'}</span>
-              <button data-t="${t}" onclick="event.stopPropagation();openUPS([this.dataset.t])" style="font-size:10px;color:var(--blue);background:transparent;border:1px solid rgba(59,130,246,.35);border-radius:3px;padding:2px 7px;cursor:pointer;white-space:nowrap;flex-shrink:0">Track ↗</button>
-            </div>`;
-          }).join('')
-        : '<span style="font-size:11px;color:var(--text3)">No tracking numbers — add via edit order</span>';
-
-      html+=`<div style="border-bottom:1px solid var(--border);background:rgba(204,0,0,.04)">
-        <div style="display:flex;align-items:center;padding:8px 14px;gap:8px">
-          <span style="flex:0 0 60px;font-size:12px;color:var(--text2)">${o.date}</span>
-          <span style="flex:0 0 70px;font-size:12px;font-weight:600">#${e(o.orderNum)}</span>
-          <span style="flex:1;font-size:12px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(o.description)}</span>
-          <span style="flex:0 0 100px;text-align:center">
-            <span style="font-size:14px;font-weight:800;font-family:var(--fh);color:${severity};display:block;line-height:1">${days-coreReturnDays}d overdue</span>
-            <span style="font-size:9px;color:var(--text3)">${days} days old</span>
-          </span>
-          <span style="flex:0 0 auto;display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn-grn" style="font-size:10px;padding:3px 8px" onclick="markUsed('${o.id}')">✓ returned</button>
-            <button class="btn-s" style="font-size:10px;padding:3px 8px;${showEmail?'color:var(--green);border-color:var(--green)':''}" onclick="toggleEmail('${o.id}')">${showEmail?'hide':'✉ remind'}</button>
-            ${days>=90?`<button class="btn-d" style="font-size:10px;padding:3px 8px" onclick="writeOffCore('${o.id}')" title="Core not returned 90+ days — void warranty">⚠ void</button>`:''}
-            <button class="btn-s" style="font-size:10px;padding:3px 8px" onclick="editOrd('${o.id}')">edit</button>
-          </span>
-        </div>
-        <div style="padding:4px 14px 8px 32px;background:rgba(0,0,0,.1)">
-          ${trackRows}
-        </div>
-        ${showEmail?`<div style="padding:0 14px 12px 14px">
-          ${o.customerEmail?`<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:7px 10px;background:var(--bg3);border-radius:6px;border:1px solid var(--border2)">
-            <span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;flex-shrink:0">Send to:</span>
-            <span style="font-size:13px;font-weight:600;color:var(--text);flex:1">${e(o.customerEmail)}</span>
-            <button class="btn-s" style="font-size:10px" onclick="navigator.clipboard.writeText('${e(o.customerEmail)}')">Copy email</button>
-          </div>`:'<div style="padding:4px 0 8px;font-size:11px;color:var(--text3)">No customer email saved — add it via edit order</div>'}
-          <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">Copy &amp; paste this into your email:</div>
-          <pre style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--text2);white-space:pre-wrap;font-family:inherit;line-height:1.6;word-break:break-word;">${e(emailLines)}</pre>
-          <button class="btn-s" id="copy-btn-${o.id}" style="margin-top:6px;font-size:11px" onclick="copyEmail('${o.id}')">Copy to clipboard</button>
-          ${buildReminderLog(o)}
-        </div>`:''}
-      </div>`;
-    });
-    html+=`</div>`;
-  }
-
-  // Main list based on filter
+  // Derive view sublists from viewOrders
   const viewInWindow=viewOrders.filter(o=>!isOrderReturned(o)&&!o.warrantyVoided&&daysAged(o.date)<=coreReturnDays);
   const viewOverdue=viewOrders.filter(o=>!isOrderReturned(o)&&!o.warrantyVoided&&daysAged(o.date)>coreReturnDays);
   const viewReturned=viewOrders.filter(o=>isOrderReturned(o)&&!o.warrantyVoided);
   const viewVoided=viewOrders.filter(o=>o.warrantyVoided);
 
-  if(coreFilter!=='returned'){
-    const totalPendingNums=viewInWindow.reduce((s,o)=>s+pendingLabelCount(o),0);
-    if(allPending.length>0)html+=`<div class="alert a-warn">⚑ ${totalPendingNums} label${totalPendingNums!==1?'s':''} pending across ${allPending.length} order${allPending.length!==1?'s':''} — up to ${$$(pAmt,2)} exposure.</div>`;
-    if(viewInWindow.length)html+=lblSec('Outstanding — not yet returned',viewInWindow,false);
-    else if(!aging.length&&coreFilter==='outstanding')html+=`<div style="padding:20px;text-align:center;color:var(--green);font-weight:600">✓ No outstanding cores</div>`;
+  // ── Build the list ────────────────────────────────────────────────────────
+  // All pending = combine in-window + overdue, sort: unreminded first (oldest top),
+  // reminded last (least recently reminded first)
+  function sortPending(list){
+    return [...list].sort(function(a,b){
+      const aRem=(a.reminderLog||[]).length>0;
+      const bRem=(b.reminderLog||[]).length>0;
+      if(aRem!==bRem) return aRem?1:-1;
+      if(!aRem) return pd(a.date)-pd(b.date); // oldest first
+      const aLast=a.reminderLog[a.reminderLog.length-1];
+      const bLast=b.reminderLog[b.reminderLog.length-1];
+      return pd(aLast)-pd(bLast);
+    });
   }
+
+  // Use the already-filtered view lists
+  const pendingToShow=coreFilter==='inwindow'?viewInWindow
+    :coreFilter==='overdue'?viewOverdue
+    :coreFilter==='returned'?[]
+    :[...viewInWindow,...viewOverdue]; // 'all'
+
+  if(coreFilter!=='returned'&&pendingToShow.length){
+    html+=lblSec('Outstanding — pending return',pendingToShow,false);
+  } else if(coreFilter!=='returned'&&!pendingToShow.length&&!viewReturned.length&&!viewVoided.length){
+    html+='<div style="padding:30px;text-align:center;color:var(--green);font-weight:600">✓ No outstanding cores</div>';
+  }
+
   if(viewReturned.length){
     const rTotal=viewReturned.reduce((s,o)=>s+n(o.returnCost),0);
-    html+=`<hr class="divider">`;
-    html+=lblSec(`Returned — ${$$(rTotal,2)} recovered`,viewReturned,true);
+    html+='<hr class="divider">';
+    html+=lblSec('Returned — '+$$(rTotal,2)+' recovered',viewReturned,true);
   }
   if(viewVoided.length){
-    html+=`<hr class="divider"><div style="font-size:10px;font-weight:700;color:#f87171;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">⚠ Warranty voided (${viewVoided.length})</div>`;
-    html+=viewVoided.map(o=>`<div class="lbl-card used" style="border-color:rgba(204,0,0,.3)"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-weight:700;font-size:14px">#${e(o.orderNum)}</div><div style="font-size:12px;color:var(--text3)">${o.date} · ${e(o.description)}</div></div><span class="badge" style="background:rgba(204,0,0,.15);color:#f87171;border:1px solid rgba(204,0,0,.3)">WARRANTY VOID</span></div><div style="margin-top:6px;font-size:11px;color:var(--text3)">Core not returned after 90+ days — warranty voided.</div><button class="btn-s" style="margin-top:6px;font-size:10px" data-oid="${o.id}" onclick="(function(id){pushUndo();const x=orders.find(o=>o.id===id);x.warrantyVoided=false;x.returnUsed=false;x.returnedNums=[];saveAll();render();})(this.dataset.oid)">undo write-off</button></div>`).join('');
+    html+='<hr class="divider"><div style="font-size:10px;font-weight:700;color:#f87171;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">⚠ Warranty voided ('+viewVoided.length+')</div>';
+    html+=viewVoided.map(o=>'<div class="lbl-card used" style="border-color:rgba(204,0,0,.3)"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-weight:700;font-size:14px">#'+e(o.orderNum)+'</div><div style="font-size:12px;color:var(--text3)">'+o.date+' &middot; '+e(o.description)+'</div></div><span class="badge" style="background:rgba(204,0,0,.15);color:#f87171;border:1px solid rgba(204,0,0,.3)">WARRANTY VOID</span></div><div style="margin-top:6px;font-size:11px;color:var(--text3)">Core not returned after 90+ days — warranty voided.</div><button class="btn-s" style="margin-top:6px;font-size:10px" data-oid="'+o.id+'" onclick="(function(id){pushUndo();const x=orders.find(o=>o.id===id);x.warrantyVoided=false;x.returnUsed=false;x.returnedNums=[];saveAll();render();})(this.dataset.oid)">undo write-off</button></div>').join('');
   }
-  if(!viewInWindow.length&&!viewReturned.length&&!viewVoided.length&&!aging.length)html+=`<div style="padding:30px;text-align:center;color:var(--text3)">No orders match your current filter.</div>`;
-  return html;
+  if(!pendingToShow.length&&!viewReturned.length&&!viewVoided.length){
+    html+='<div style="padding:30px;text-align:center;color:var(--text3)">No orders match your current filter.</div>';
+  }
+    return html;
 }
 function checkAllTracking(pendingOnly=true){
   // Collect all untracked tracking numbers from pending cores
@@ -1740,68 +1697,79 @@ function checkAllTracking(pendingOnly=true){
 }
 // setTracking replaced by trackingNumbers array
 function lcard(o,isUsed){
-  const showEmail=showEmailFor.has(o.id);
-  const emailLines=buildEmailLines(o);
   const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
   const rn=o.returnedNums||[];
   const allRet=isOrderReturned(o);
   const oid=o.id;
-
-  // Build tracking rows using a helper to avoid quote issues
+  const remLog=o.reminderLog||[];
+  const dAge=daysAged(o.date);
+  const isOverdue=dAge>coreReturnDays;
   let trackSection='';
   if(tNums.length){
     let numRows='';
     tNums.forEach(function(t){
       const ret=rn.includes(t);
-      const chk='<input type="checkbox" '+(ret?'checked ':'')+'data-oid="'+oid+'" data-trk="'+t+'" onclick="event.stopPropagation()" onchange="handleTrackChk(this)" style="accent-color:var(--green);width:14px;height:14px;cursor:pointer;flex-shrink:0">';
-      const trackBtn='<button data-t="'+t+'" onclick="event.stopPropagation();openUPS([this.dataset.t])" style="font-size:11px;color:var(--blue);background:transparent;border:1px solid rgba(59,130,246,.35);border-radius:4px;padding:3px 8px;cursor:pointer;white-space:nowrap;flex-shrink:0">Track ↗</button>';
-      numRows+='<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'+chk+'<span style="font-family:monospace;font-size:12px;flex:1;color:var(--text2)">'+e(t)+'</span>'+trackBtn+'<span style="font-size:10px;font-weight:600;color:'+(ret?'var(--green)':'var(--amber)')+';white-space:nowrap;flex-shrink:0;min-width:60px;text-align:right">'+(ret?'✓ returned':'pending')+'</span></div>';
+      numRows+='<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
+        +'<input type="checkbox" '+(ret?'checked ':'')+'data-oid="'+oid+'" data-trk="'+t+'" onclick="event.stopPropagation()" onchange="handleTrackChk(this)" style="accent-color:var(--green);width:14px;height:14px;cursor:pointer;flex-shrink:0">'
+        +'<span style="font-family:monospace;font-size:12px;flex:1;color:var(--text2)">'+e(t)+'</span>'
+        +'<button data-t="'+t+'" onclick="event.stopPropagation();openUPS([this.dataset.t])" style="font-size:11px;color:var(--blue);background:transparent;border:1px solid rgba(59,130,246,.35);border-radius:4px;padding:3px 8px;cursor:pointer;white-space:nowrap;flex-shrink:0">Track ↗</button>'
+        +'<span style="font-size:10px;font-weight:600;color:'+(ret?'var(--green)':'var(--amber)')+';white-space:nowrap;flex-shrink:0;min-width:60px;text-align:right">'+(ret?'✓ returned':'pending')+'</span></div>';
     });
-    const summary=allRet?'<span style="font-size:11px;font-weight:600;color:var(--green)">✓ All '+tNums.length+' cores returned</span>':'<span style="font-size:11px;font-weight:600;color:var(--amber)">'+rn.length+' of '+tNums.length+' returned</span>';
-    trackSection='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Tracking numbers</span>'+summary+'</div>'+numRows+'</div>';
+    const summary=allRet?'<span style="font-size:11px;font-weight:600;color:var(--green)">✓ All returned</span>':'<span style="font-size:11px;font-weight:600;color:var(--amber)">'+rn.length+'/'+tNums.length+' returned</span>';
+    trackSection='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Tracking</span>'+summary+'</div>'+numRows+'</div>';
   } else {
-    const chk='<input type="checkbox" '+(allRet?'checked ':'')+'data-oid="'+oid+'" onclick="event.stopPropagation()" onchange="handleCoreChk(this)" style="accent-color:var(--green);width:15px;height:15px;cursor:pointer">';
-    trackSection='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">'+chk+'<span style="font-size:13px;font-weight:600;color:'+(allRet?'var(--green)':'var(--amber)')+'">'+( allRet?'✓ Core returned':'Awaiting core return')+'</span></label></div>';
+    trackSection='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" '+(allRet?'checked ':'')+'data-oid="'+oid+'" onclick="event.stopPropagation()" onchange="handleCoreChk(this)" style="accent-color:var(--green);width:15px;height:15px;cursor:pointer"><span style="font-size:13px;font-weight:600;color:'+(allRet?'var(--green)':'var(--amber)')+'">'+(allRet?'✓ Core returned':'Awaiting core return')+'</span></label></div>';
   }
-
+  let reminderSection='';
+  if(!allRet&&isOverdue){
+    if(remLog.length===0){
+      reminderSection='<div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;background:rgba(234,179,8,.07);border:1px solid rgba(234,179,8,.25);border-radius:var(--r)">'
+        +'<span style="font-size:12px;color:var(--amber);font-weight:600">⚠ No reminder sent &mdash; '+dAge+'d old</span>'
+        +'<button data-id="'+oid+'" onclick="event.stopPropagation();logReminderAndRefresh(this.dataset.id)" class="btn-p" style="font-size:12px;padding:6px 16px;background:var(--amber);white-space:nowrap">✉ Reminder Sent</button>'
+        +'</div>';
+    } else {
+      const lastDate=remLog[remLog.length-1];
+      const lp=lastDate.split('/').map(Number);
+      const daysSinceLast=Math.floor((new Date()-new Date(lp[2],lp[0]-1,lp[1]))/(1000*60*60*24));
+      reminderSection='<div style="margin-top:10px;padding:10px 12px;background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.25);border-radius:var(--r)">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
+        +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
+        +'<span style="font-size:12px;color:var(--green);font-weight:600">✉ Reminded:</span>'
+        +remLog.map(function(d,i){return'<span style="font-size:11px;background:var(--bg3);border:1px solid rgba(34,197,94,.3);border-radius:4px;padding:2px 8px;color:var(--green)">'+(i===0?'1st':i===1?'2nd':i===2?'3rd':(i+1)+'th')+' '+d+'</span>';}).join('')
+        +'<button style="font-size:10px;background:transparent;border:1px solid var(--border);border-radius:4px;padding:2px 7px;cursor:pointer;color:var(--text3)" data-id="'+oid+'" data-idx="'+(remLog.length-1)+'" onclick="event.stopPropagation();removeReminder(this.dataset.id,parseInt(this.dataset.idx))">undo</button>'
+        +'</div>'
+        +'<button data-id="'+oid+'" onclick="event.stopPropagation();logReminderAndRefresh(this.dataset.id)" class="btn-grn" style="font-size:11px;padding:4px 12px;white-space:nowrap">+ Log another</button>'
+        +'</div></div>';
+    }
+  }
+  const showEmail=showEmailFor.has(o.id);
+  const emailLines=buildEmailLines(o);
   const to=o.customerEmail?e(o.customerEmail):'';
-  const emailSection=showEmail?('<div style="width:100%;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'+(to?'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:var(--bg3);border-radius:5px;border:1px solid var(--border2)"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;font-weight:600;flex-shrink:0">Send to:</span><span style="font-size:13px;font-weight:600;color:var(--text);flex:1">'+to+'</span><button class="btn-s" style="font-size:10px" data-email="'+to+'" onclick="event.stopPropagation();navigator.clipboard.writeText(this.dataset.email)">Copy</button></div>':'<div style="padding:2px 0 8px;font-size:11px;color:var(--text3)">No customer email saved — add via edit order</div>')+'<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">Copy &amp; paste into your email:</div><pre class="email-tpl">'+e(emailLines)+'</pre><button class="btn-s" id="copy-btn-'+oid+'" style="margin-top:6px" data-oid="'+oid+'" onclick="event.stopPropagation();copyEmail(this.dataset.oid)">Copy to clipboard</button></div>'):'';
-
-  const dAge=daysAged(o.date);
+  const emailSection=showEmail?'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'
+    +(to?'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:var(--bg3);border-radius:5px;border:1px solid var(--border2)"><span style="font-size:10px;color:var(--text3);font-weight:600;flex-shrink:0">TO:</span><span style="font-size:13px;font-weight:600;flex:1">'+to+'</span><button class="btn-s" style="font-size:10px" data-email="'+to+'" onclick="event.stopPropagation();navigator.clipboard.writeText(this.dataset.email)">Copy</button></div>'
+      :'<div style="font-size:11px;color:var(--text3);margin-bottom:8px">No email saved — add via edit order</div>')
+    +'<pre style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--text2);white-space:pre-wrap;font-family:inherit;line-height:1.6;word-break:break-word;">'+e(emailLines)+'</pre>'
+    +'<button class="btn-s" id="copy-btn-'+oid+'" style="margin-top:6px;font-size:11px" data-oid="'+oid+'" onclick="event.stopPropagation();copyEmail(this.dataset.oid)">Copy to clipboard</button>'
+    +'</div>':'';
   const daysLeft=coreReturnDays-dAge;
-  const dueLabel=allRet?'':(daysLeft>0?'<span style="font-size:10px;font-weight:600;color:var(--green);margin-left:8px">Due in '+daysLeft+'d</span>':(daysLeft===0?'<span style="font-size:10px;font-weight:600;color:var(--amber);margin-left:8px">Due today</span>':'<span style="font-size:10px;font-weight:600;color:#f87171;margin-left:8px">'+Math.abs(daysLeft)+'d overdue</span>'));
-  const coreExpanded=expandedCores.has(o.id);
-  const activeF=fieldConfig.filter(x=>x.active);
-  const costRows=activeF.map(fc=>'<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04);font-size:12px"><span style="color:var(--text3)">'+e(fc.label)+'</span><span style="font-weight:500">'+$$(n(o[fc.id]||0),2)+'</span></div>').join('');
-  const expandDetail=coreExpanded?('<div style="padding:10px 14px 12px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr;gap:12px 20px;background:rgba(0,0,0,.15)">'
-    +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Cost breakdown</div>'
-    +costRows
-    +(n(o.returnCost)>0?'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:12px"><span style="color:var(--text3)">Return shipping</span><span>'+$$(n(o.returnCost),2)+'</span></div>':'')
-    +'<div style="display:flex;justify-content:space-between;padding:4px 0;margin-top:3px;border-top:1px solid var(--border2);font-size:12px;font-weight:700"><span>Gross profit</span><span class="'+cc(gp(o))+'">'+$$(gp(o),2)+' ('+gpPct(o).toFixed(1)+'%)</span></div>'
-    +'</div>'
-    +'<div><div style="font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Order info</div>'
-    +'<div style="font-size:12px;margin-bottom:3px">Revenue: <strong class=\"cg\">'+$$(n(o.revenue),2)+'</strong></div>'
-    +(n(o.coreValue)>0?'<div style="font-size:12px;margin-bottom:3px;color:var(--amber);font-weight:600">Core value: '+$$(n(o.coreValue),2)+'</div>':'')
-    +(o.notes?'<div style="font-size:11px;color:var(--text3);font-style:italic;margin-top:4px">'+e(o.notes)+'</div>':'')
-    +'</div>'
-    +'</div>'):'' ;
-
-  return '<div class="lbl-card'+(allRet?' used':'') +'" style="cursor:pointer" data-oid="'+o.id+'" onclick="toggleCoreExpand(this.dataset.oid)">'
+  const dueLabel=allRet?'':(daysLeft>0?' <span style="font-size:10px;font-weight:600;color:var(--green)">due in '+daysLeft+'d</span>':(daysLeft===0?' <span style="font-size:10px;font-weight:600;color:var(--amber)">due today</span>':(daysLeft>-10?' <span style="font-size:10px;font-weight:600;color:var(--amber)">'+Math.abs(daysLeft)+'d overdue</span>':' <span style="font-size:10px;font-weight:600;color:#f87171">'+Math.abs(daysLeft)+'d overdue</span>')));
+  return '<div class="lbl-card'+(allRet?' used':'')+'" style="cursor:pointer" data-oid="'+o.id+'" onclick="toggleCoreExpand(this.dataset.oid)">'
     +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">'
-    +'<div><div style="font-weight:700;font-size:15px;font-family:var(--fh)">Order #'+e(o.orderNum)+'</div>'
+    +'<div><div style="font-weight:700;font-size:15px;font-family:var(--fh)">Order #'+e(o.orderNum)+dueLabel+'</div>'
     +'<div style="font-size:12px;color:var(--text2);margin-top:2px">'+e(o.description)+'</div>'
-    +'<div style="font-size:11px;color:var(--text3);margin-top:1px">'+o.date+(to?' · '+to:'')+(n(o.coreValue)>0?' <span style="color:var(--amber);font-weight:600">· core value: '+$$(n(o.coreValue),2)+'</span>':'')+'</div>'
+    +'<div style="font-size:11px;color:var(--text3);margin-top:1px">'+o.date+(to?' &middot; '+to:'')+(n(o.coreValue)>0?' <span style="color:var(--amber);font-weight:600">&middot; core value: '+$$(n(o.coreValue),2)+'</span>':'')+'</div>'
     +'</div><span class="badge '+(allRet?'bdg-u':'bdg-p')+'">'+(allRet?'returned':'pending')+'</span></div>'
     +trackSection
+    +reminderSection
     +'<div class="fc-row" style="flex-wrap:wrap;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">'
     +'<label style="font-size:11px;color:var(--text3)">Charge ($)</label>'
     +'<input type="number" value="'+o.returnCost+'" placeholder="0.00" style="width:90px;border:1px solid var(--border2);border-radius:var(--r);padding:5px 8px;font-size:13px;font-family:var(--fb);background:var(--bg2);color:var(--text)" data-oid="'+oid+'" onclick="event.stopPropagation()" oninput="setLblCost(this.dataset.oid,this.value)">'
-    +'<button class="btn-s" style="'+(showEmail?'color:var(--green);border-color:var(--green)':'')+'" data-oid="'+oid+'" onclick="toggleEmail(this.dataset.oid)">'+(showEmail?'hide reminder':'✉ reminder')+'</button>'
-    +'<button class="btn-s" style="margin-left:auto" data-oid="'+oid+'" onclick="event.stopPropagation();editOrd(this.dataset.oid)">edit order</button>'
+    +'<button class="btn-s" style="'+(showEmail?'color:var(--green);border-color:var(--green)':'')+'" data-oid="'+oid+'" onclick="event.stopPropagation();toggleEmail(this.dataset.oid)">'+(showEmail?'▲ hide':'✉ email template')+'</button>'
+    +'<button class="btn-s" style="margin-left:auto" data-oid="'+oid+'" onclick="event.stopPropagation();editOrd(this.dataset.oid)">edit</button>'
     +emailSection
-    +'</div>'+expandDetail+'</div>';
+    +'</div></div>';
 }
-// Helper handlers that use data attributes (avoid quote escaping in onclick)
+
 function buildReminderLog(o){
   const log=o.reminderLog||[];
   let html='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">';
@@ -1825,7 +1793,20 @@ function buildReminderLog(o){
 function handleTrackChk(el){toggleTrackReturned(el.dataset.oid,el.dataset.trk,el.checked);}
 function handleCoreChk(el){toggleCoreReturned(el.dataset.oid,el.checked);}
 
-function lblSec(title,list,isUsed){return`<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">${title}</div>`+list.sort((a,b)=>isUsed?pd(b.date)-pd(a.date):pd(a.date)-pd(b.date)).map(o=>lcard(o,isUsed)).join('');}
+function lblSec(title,list,isUsed){
+  const sorted=[...list].sort(function(a,b){
+    if(isUsed) return pd(b.date)-pd(a.date);
+    const aRem=(a.reminderLog||[]).length>0;
+    const bRem=(b.reminderLog||[]).length>0;
+    if(aRem!==bRem) return aRem?1:-1;
+    if(!aRem) return pd(a.date)-pd(b.date);
+    const aLast=a.reminderLog[a.reminderLog.length-1];
+    const bLast=b.reminderLog[b.reminderLog.length-1];
+    return pd(aLast)-pd(bLast);
+  });
+  return'<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">'+title+'</div>'+sorted.map(o=>lcard(o,isUsed)).join('');
+}
+
 function setLblCost(id,v){const o=orders.find(x=>x.id===id);if(o){o.returnCost=v;saveAll();}}
 function markUsed(id){const o=orders.find(x=>x.id===id);if(!o)return;pushUndo();const t=(o.trackingNumbers||[]).filter(x=>x.trim());if(t.length>0){o.returnedNums=[...t];}o.returnUsed=true;saveAll();render();}
 function unmark(id){const o=orders.find(x=>x.id===id);if(o){pushUndo();o.returnUsed=false;o.returnedNums=[];saveAll();render();}}
@@ -2107,6 +2088,14 @@ function buildAudit(dated,sortedP){
 }
 
 // ── ORDER ACTIONS ─────────────────────────────────────────────────────────────
+function logReminderAndRefresh(id){
+  const o=orders.find(x=>x.id===id);if(!o)return;
+  pushUndo();
+  if(!o.reminderLog)o.reminderLog=[];
+  const d=new Date();
+  o.reminderLog.push((d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear());
+  saveAll();render();
+}
 function logReminder(id){
   const o=orders.find(x=>x.id===id);if(!o)return;
   pushUndo();if(!o.reminderLog)o.reminderLog=[];
@@ -2208,7 +2197,7 @@ function removeEmployee(id){
   saveEmployees();render();
 }
 function clearAllData(){pushUndo();orders=[];dailyExpenses=[];dailyOverrides={};saveAll();render();}
-function submitEntry(){if(!f.revenue){return;}pushUndo();if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId}:o);editId=null;}else orders.push({...f,id:uid()});saveAll();f=fresh();sv('daily');}
+function submitEntry(){if(!f.date){alert('Please enter a date.');return;}pushUndo();const now=Date.now();if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId,_updated:now}:o);editId=null;}else{orders.push({...f,id:uid(),_updated:now});}saveAll();f=fresh();sv('daily');}
 function cancelEntry(){editId=null;f=fresh();sv('daily');}
 function editOrd(id){const o=orders.find(x=>x.id===id);if(o){f={...o};editId=id;sv('entry');}}
 function delOrd(id){pushUndo();orders=orders.filter(o=>o.id!==id);saveAll();render();}
@@ -2311,7 +2300,7 @@ function dailyV(){
   let r=0;
   if(allDated.length){
     const ordMap={};
-    allDated.forEach(([date,dayOrders])=>{ordMap[date]=dayOrders;});
+    allDated.forEach(([date,dayOrders])=>{ordMap[normDateStr(date)]=dayOrders;});
     const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
     const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
     bizStart.setHours(0,0,0,0);
@@ -2333,7 +2322,7 @@ function dailyV(){
   const dayData=(isFiltered?filteredDated:allDated).map(([date,dayOrders])=>{
     const dRev=dayOrders.reduce((s,o)=>s+n(o.revenue),0),dVc=dayOrders.reduce((s,o)=>s+vc(o),0);
     const dBurn=getDayBurn(date),dExpT=getDayExpTotal(date),dNet=dRev-dVc-dBurn-dExpT;
-    return{date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet:fullRnet[date]||0,isFiltered};
+    return{date,dayOrders,dRev,dVc,dBurn,dExpT,dNet,rnet:fullRnet[normDateStr(date)]||0,isFiltered};
   });
 
   // Auto-expand most recent day if nothing is expanded yet
