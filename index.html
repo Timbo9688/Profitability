@@ -614,16 +614,9 @@ function startAutoPoll(){
         const r=await fetch(syncConfig.scriptUrl);
         if(!r.ok)return;
         const rec=await r.json();
-        // Use order count + dailyExpenses count as change indicator — not clock time
-        // This avoids issues with clocks being out of sync between devices
-        const cloudOrderCount=(rec.orders||[]).length;
-        const cloudExpCount=(rec.dailyExpenses||[]).length;
-        const localOrderCount=orders.length;
-        const localExpCount=dailyExpenses.length;
-        if(cloudOrderCount!==localOrderCount||cloudExpCount!==localExpCount){
-          const changed=await syncFromCloud();
-          if(changed)render();
-        }
+        // Always pull every 60s — catches new orders AND edits to existing ones
+        const changed=await syncFromCloud();
+        if(changed)render();
       }catch(ex){}
     }
   },60000);
@@ -2229,7 +2222,7 @@ function uploadBg(){
 function removeBg(){localStorage.removeItem('hpdc-bg');applyBg();if(view==='settings')render();}
 loadData();
 applyBg();
-if(syncConfig.enabled&&syncConfig.scriptUrl){syncFromCloud().then(c=>{if(c)render();startAutoPoll();});}
+if(syncConfig.enabled&&syncConfig.scriptUrl){syncFromCloud().then(()=>{render();startAutoPoll();});}
 else{render();}
 
 // ── DOOM ─────────────────────────────────────────────────────────────────────
