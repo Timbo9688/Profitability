@@ -576,7 +576,35 @@ async function syncFromCloud(){
     const rec=await r.json();
     if(rec._ts&&rec.orders){
       // Orders + costs
-      if(rec.orders){orders=rec.orders;localStorage.setItem('hpdc-orders',JSON.stringify(orders));}
+      if(rec.orders){
+        // Smart merge: cloud wins for newer _updated, local wins for deletions
+        const localIds=new Set(orders.map(o=>o.id));
+        const cloudMap={};rec.orders.forEach(o=>cloudMap[o.id]=o);
+        const localMap={};orders.forEach(o=>localMap[o.id]=o);
+        const allCloudIds=Object.keys(cloudMap);
+        const merged=[];
+        // Keep all local orders (includes deletions — if not in local, it was deleted)
+        orders.forEach(o=>{
+          const cloud=cloudMap[o.id];
+          if(!cloud){merged.push(o);return;}
+          // Both exist — keep newer
+          const lt=o._updated||0,ct=cloud._updated||0;
+          merged.push(lt>=ct?o:cloud);
+        });
+        // Add cloud-only orders that aren't in local deleted set
+        // Only add if _updated is recent (last 5 mins) — new order from another device
+        const now=Date.now();
+        allCloudIds.forEach(id=>{
+          if(!localMap[id]){
+            const co=cloudMap[id];
+            // Only restore if recently updated (from another device) — not a local deletion
+            if((co._updated||0)>now-300000){merged.push(co);}
+          }
+        });
+        merged.sort((a,b)=>pd(b.date)-pd(a.date));
+        orders=merged;
+        localStorage.setItem('hpdc-orders',JSON.stringify(orders));
+      }
       if(rec.fcPeriods){fcPeriods=rec.fcPeriods.map(migratePeriod);localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}
       if(rec.customExpenses){customExpenses=rec.customExpenses;localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));}
       if(rec.dailyOverrides){dailyOverrides=rec.dailyOverrides;localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));}
