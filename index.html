@@ -513,6 +513,15 @@ function getPayload(){
     burnRates,employees,alertThreshold,coreReturnDays,emailTemplate,
     reviewedOrders:[...reviewedOrders],appPassword,versions,bg,_ts:Date.now()};
 }
+async function forcePushToCloud(){
+  if(!syncConfig.scriptUrl)return;
+  setSyncStatus('busy','saving…');
+  try{
+    const pushRes=await fetch(syncConfig.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(getPayload())});
+    if(!pushRes.ok){setSyncStatus('err','push failed ('+pushRes.status+')');return;}
+    setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
+  }catch(e){setSyncStatus('err','error: '+e.message);}
+}
 async function syncToCloud(){
   if(!syncConfig.scriptUrl){setSyncStatus('err','no script URL');alert('Paste your Google Apps Script URL in Settings → Cloud sync.');return;}
   syncConfig.enabled=true;saveSyncConf();
@@ -2193,7 +2202,7 @@ function clearAllData(){pushUndo();orders=[];dailyExpenses=[];dailyOverrides={};
 function submitEntry(){if(!f.date){alert('Please enter a date.');return;}pushUndo();const now=Date.now();if(editId){orders=orders.map(o=>o.id===editId?{...f,id:editId,_updated:now}:o);editId=null;}else{orders.push({...f,id:uid(),_updated:now});}saveAll();f=fresh();sv('daily');}
 function cancelEntry(){editId=null;f=fresh();sv('daily');}
 function editOrd(id){const o=orders.find(x=>x.id===id);if(o){f={...o};editId=id;sv('entry');}}
-function delOrd(id){pushUndo();orders=orders.filter(o=>o.id!==id);saveAll();render();}
+function delOrd(id){pushUndo();orders=orders.filter(o=>o.id!==id);try{localStorage.setItem('hpdc-orders',JSON.stringify(orders));}catch(e){}stamp();forcePushToCloud();render();}
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 function applyBg(){
