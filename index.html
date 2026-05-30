@@ -515,58 +515,17 @@ function getPayload(){
     reviewedOrders:[...reviewedOrders],appPassword,versions,bg,_ts:Date.now()};
 }
 async function forcePushToCloud(){
-  if(!syncConfig.scriptUrl)return;
-  setSyncStatus('busy','saving…');
-  try{
-    const pushRes=await fetch(syncConfig.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(getPayload())});
-    if(!pushRes.ok){setSyncStatus('err','push failed ('+pushRes.status+')');return;}
-    setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
-  }catch(e){setSyncStatus('err','error: '+e.message);}
+  /* READ-ONLY MODE: the app no longer writes to the cloud. The Profitability New sheet is the single source of truth.
+     Enter and edit data in the sheet; the app pulls it down. */
+  stamp(); setSyncStatus('ok','read-only');
 }
 async function syncToCloud(){
-  if(!syncConfig.scriptUrl){setSyncStatus('err','no script URL');alert('Paste your Google Apps Script URL in Settings → Cloud sync.');return;}
+  // READ-ONLY MODE: "Sync" now only PULLS the latest from the cloud. Data entry happens in the Profitability New sheet.
+  if(!syncConfig.scriptUrl){setSyncStatus('err','no script URL');return;}
   syncConfig.enabled=true;saveSyncConf();
-  setSyncStatus('busy','syncing…');
-  try{
-    // Pull first, merge, then push
-    const pullRes=await fetch(syncConfig.scriptUrl);
-    if(pullRes.ok){
-      const rec=await pullRes.json();
-      if(rec.orders&&Array.isArray(rec.orders)){
-        const cloudMap={};rec.orders.forEach(o=>cloudMap[o.id]=o);
-        const localMap={};orders.forEach(o=>localMap[o.id]=o);
-        const allIds=new Set([...Object.keys(cloudMap),...Object.keys(localMap)]);
-        const merged=[];
-        allIds.forEach(id=>{
-          const local=localMap[id],cloud=cloudMap[id];
-          if(!cloud)merged.push(local);
-          else if(!local)merged.push(cloud);
-          else{const lt=local._updated||0,ct=cloud._updated||0;merged.push(lt>=ct?local:cloud);}
-        });
-        merged.sort((a,b)=>pd(b.date)-pd(a.date));
-        orders=merged;
-        localStorage.setItem('hpdc-orders',JSON.stringify(orders));
-        if(rec.burnRates&&Array.isArray(rec.burnRates)){
-          const ids=new Set(burnRates.map(r=>r.id));
-          const extra=rec.burnRates.filter(r=>!ids.has(r.id));
-          if(extra.length){burnRates=[...burnRates,...extra];burnRates.sort((a,b)=>pd(b.effectiveDate)-pd(a.effectiveDate));localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));}
-        }
-        if(rec.employees&&Array.isArray(rec.employees)){
-          const ids=new Set(employees.map(e=>e.id));
-          const extra=rec.employees.filter(e=>!ids.has(e.id));
-          if(extra.length){employees=[...employees,...extra];localStorage.setItem('hpdc-emp',JSON.stringify(employees));}
-        }
-        if(rec.dailyExpenses&&Array.isArray(rec.dailyExpenses)){
-          const ids=new Set(dailyExpenses.map(x=>x.id));
-          const extra=rec.dailyExpenses.filter(x=>!ids.has(x.id));
-          if(extra.length){dailyExpenses=[...dailyExpenses,...extra];localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));}
-        }
-      }
-    }
-    const pushRes=await fetch(syncConfig.scriptUrl,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(getPayload())});
-    if(!pushRes.ok){setSyncStatus('err','push failed ('+pushRes.status+')');return;}
-    setSyncStatus('ok','synced '+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}));
-  }catch(e){setSyncStatus('err','error: '+e.message);}
+  setSyncStatus('busy','refreshing…');
+  const changed=await syncFromCloud();
+  if(changed)render();
 }
 async function syncFromCloud(){
   if(!syncConfig.enabled||!syncConfig.scriptUrl)return false;
