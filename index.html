@@ -821,6 +821,15 @@ function sv(v){
 function updateBadge(){const p=orders.reduce((s,o)=>s+pendingLabelCount(o),0),btn=document.getElementById('nav-labels');if(!btn)return;const ex=btn.querySelector('.bcnt');if(p>0){if(!ex)btn.insertAdjacentHTML('beforeend',`<span class="bcnt">${p}</span>`);else ex.textContent=p;}else if(ex)ex.remove();}
 function render(){document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();updateUndoBtn();}
 let incomingData=(function(){try{return JSON.parse(localStorage.getItem('hpdc-incoming')||'null');}catch(e){return null;}})();
+const SCAN_URL='https://script.google.com/macros/s/AKfycbxAJxuJW_DZ1epfWpTOhRiKLCix-0M9ldJ1zQBxfymGNevBngOLCa3ge1EsEAMW8JVJyg/exec?action=scan&token=hdpc-core-7Qx2vK9mLp4wZ';
+function scanNow(btn){
+  if(btn){btn.disabled=true;btn.textContent='⏳ Scanning UPS… (~1 min)';}
+  // fire-and-forget; the cloud scan keeps running server-side. Then auto-refresh.
+  fetch(SCAN_URL,{mode:'no-cors'}).catch(()=>{});
+  let left=90;
+  const tick=setInterval(()=>{ left-=5; if(btn&&left>0)btn.textContent='⏳ Scanning UPS… '+left+'s'; },5000);
+  setTimeout(async()=>{ clearInterval(tick); try{await syncFromCloud();}catch(e){} render(); }, 92000);
+}
 function incomingV(){
   const d=incomingData;
   if(!d||(!(d.incoming||[]).length&&!(d.arrived||[]).length))return `<div class="empty"><h3>📦 No incoming cores right now</h3><p>The UPS scan runs each morning (~7am). Hit ⬇ Pull from cloud after that to refresh.</p><button class="btn-g" onclick="syncFromCloud().then(c=>{if(c)render();})">⬇ Pull from cloud</button></div>`;
@@ -833,7 +842,10 @@ function incomingV(){
   return `<div style="max-width:880px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
       <h2 style="margin:0">📦 Incoming Cores</h2>
-      <button class="btn-g" style="font-size:12px;padding:6px 12px" onclick="syncFromCloud().then(c=>{if(c)render();})">⬇ Refresh</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-p" id="scan-btn" style="font-size:12px;padding:6px 12px" onclick="scanNow(this)">🔄 Scan tracking now</button>
+        <button class="btn-g" style="font-size:12px;padding:6px 12px" onclick="syncFromCloud().then(c=>{if(c)render();})">⬇ Refresh</button>
+      </div>
     </div>
     <div style="font-size:11px;color:var(--text3);margin-bottom:10px">UPS scan as of ${d.computedAt||'?'}</div>
     <div style="font-size:14px;margin-bottom:6px"><b style="color:var(--blue)">${inc.length}</b> in transit &middot; <b style="color:var(--green)">${arr.length}</b> delivered (check in) &middot; ${d.notShippedCount||0} not shipped</div>
