@@ -821,7 +821,7 @@ function sv(v){
 function updateBadge(){const p=orders.reduce((s,o)=>s+pendingLabelCount(o),0),btn=document.getElementById('nav-labels');if(!btn)return;const ex=btn.querySelector('.bcnt');if(p>0){if(!ex)btn.insertAdjacentHTML('beforeend',`<span class="bcnt">${p}</span>`);else ex.textContent=p;}else if(ex)ex.remove();}
 function render(){document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();updateUndoBtn();}
 let incomingData=(function(){try{return JSON.parse(localStorage.getItem('hpdc-incoming')||'null');}catch(e){return null;}})();
-const SCAN_URL='https://script.google.com/macros/s/AKfycbxAJxuJW_DZ1epfWpTOhRiKLCix-0M9ldJ1zQBxfymGNevBngOLCa3ge1EsEAMW8JVJyg/exec?action=scan&token=hdpc-core-7Qx2vK9mLp4wZ';
+const SCAN_URL='https://script.google.com/macros/s/AKfycbxAJxuJW_DZ1epfWpTOhRiKLCix-0M9ldJ1zQBxfymGNevBngOLCa3ge1EsEAMW8JVJyg/exec?action=scan&token=hdpc-view-3Rk8pZqW9t';
 function scanNow(btn){
   if(btn){btn.disabled=true;btn.textContent='⏳ Scanning UPS… (~1 min)';}
   // fire-and-forget; the cloud scan keeps running server-side. Then auto-refresh.
