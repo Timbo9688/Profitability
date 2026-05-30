@@ -1922,7 +1922,7 @@ function histV(){
       <td class="trunc" style="max-width:160px;color:var(--text2)">${e(o.description)}</td>
       <td class="right cg" style="font-weight:600">${$$(n(o.revenue),2)}</td>
       ${fieldConfig.filter(f=>f.active).map(f=>`<td class="right" style="color:var(--text3)">${$$(n(o[f.id]||0),2)}</td>`).join('')}
-      <td class="right" style="white-space:nowrap">${o.returnSent?(o.returnUsed?`<span class="badge bdg-u">${$$(n(o.returnCost),2)}</span>`:`<span class="badge bdg-p">pending</span>`):`<span style="color:var(--text3)">—</span>`}</td>
+      <td class="right" style="white-space:nowrap">${o.returnSent?(o.returnUsed?`<span class="badge bdg-u">${$$(n(o.returnCost),2)}</span>`:`<span class="badge bdg-p">pending${n(o.returnCost)>0?' ('+$$(n(o.returnCost),2)+')':''}</span>`):`<span style="color:var(--text3)" title="No core required">—</span>`}</td>
       <td class="right" style="font-weight:700"><span class="${cc(gp(o))}">${$$(gp(o),2)}</span><span style="font-size:10px;color:${low?'var(--red)':'var(--text3)'};margin-left:3px">${margin.toFixed(0)}%</span></td>
       <td><button class="btn-s" onclick="editOrd('${o.id}')">edit</button></td>
     </tr>`;
