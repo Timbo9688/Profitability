@@ -830,7 +830,9 @@ async function sendReminderFromGAS(ordId,btnEl){
   if(btnEl){btnEl.disabled=true;btnEl.textContent='⏳ Sending…';}
   try{
     const r=await fetch(GAS_BASE+'?action=send_app&id='+encodeURIComponent(o.id)+'&token='+encodeURIComponent(tok));
-    const d=await r.json();
+    const text=await r.text();
+    let d;
+    try{d=JSON.parse(text);}catch(e){d={ok:false,error:'Bad response: '+text.slice(0,200)};}
     if(d.ok){
       pushUndo();
       if(!o.reminderLog)o.reminderLog=[];
@@ -838,11 +840,11 @@ async function sendReminderFromGAS(ordId,btnEl){
       o.reminderLog.push((dt.getMonth()+1)+'/'+dt.getDate()+'/'+dt.getFullYear());
       saveAll();render();
     }else{
-      alert('Could not send: '+(d.error||d.message||'Unknown error'));
+      alert('Error: '+(d.error||d.message||'Unknown'));
       if(btnEl){btnEl.disabled=false;btnEl.textContent='✉ Send Reminder';}
     }
   }catch(err){
-    alert('Network error — try again.');
+    alert('Fetch failed: '+err.message);
     if(btnEl){btnEl.disabled=false;btnEl.textContent='✉ Send Reminder';}
   }
 }
