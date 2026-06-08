@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -329,7 +329,6 @@ tbody td{padding:7px 8px;}
       <button onclick="sv('summary')">Summary</button>
       <button onclick="sv('production')">Production</button>
       <button onclick="sv('labels')" id="nav-labels">Core Returns</button>
-      <button onclick="sv('incoming')" id="nav-incoming">Incoming</button>
       <button onclick="sv('settings')">Settings</button>
     </nav>
   </div>
@@ -771,7 +770,6 @@ function sv(v){
   view=v;addingExpDate=null;
   if(v!=='history')searchQuery='';
   if(v!=='daily')lowMarginFilter=false;
-  if(v!=='labels'){coreSearch='';coreDateFrom='';coreDateTo='';coreFilter='all';}
   document.querySelectorAll('.nav button').forEach((b,i)=>b.classList.toggle('active',['daily','summary','production','labels','settings'][i]===v));
   if(v==='entry'&&!editId){f=fresh();if(entryDatePreset){f.date=entryDatePreset;entryDatePreset=null;}}
 
@@ -781,125 +779,79 @@ function updateBadge(){const p=orders.reduce((s,o)=>s+pendingLabelCount(o),0),bt
 function render(){document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();updateUndoBtn();}
 let incomingData=(function(){try{return JSON.parse(localStorage.getItem('hpdc-incoming')||'null');}catch(e){return null;}})();
 const SCAN_URL='https://script.google.com/macros/s/AKfycbxAJxuJW_DZ1epfWpTOhRiKLCix-0M9ldJ1zQBxfymGNevBngOLCa3ge1EsEAMW8JVJyg/exec?action=scan&token=hdpc-view-3Rk8pZqW9t';
-function scanNow(btn){
-  if(btn){btn.disabled=true;btn.textContent='⏳ Scanning UPS… (~1 min)';}
-  // fire-and-forget; the cloud scan keeps running server-side. Then auto-refresh.
+function scanAllReturns(btn){
+  if(btn){btn.disabled=true;btn.textContent='⏳ Scanning…';}
   fetch(SCAN_URL,{mode:'no-cors'}).catch(()=>{});
-  let left=90;
-  const tick=setInterval(()=>{ left-=5; if(btn&&left>0)btn.textContent='⏳ Scanning UPS… '+left+'s'; },5000);
-  setTimeout(async()=>{ clearInterval(tick); try{await syncFromCloud();}catch(e){} render(); }, 92000);
+  let tries=0;
+  const poll=setInterval(async()=>{
+    tries++;
+    if(btn)btn.textContent='⏳ Scanning… '+Math.min(tries*10,120)+'s';
+    try{
+      const changed=await syncFromCloud();
+      if(changed){
+        const checked=autoCheckIn(incomingData);
+        clearInterval(poll);
+        if(btn){btn.disabled=false;btn.textContent='🔄 Scan All Returns';}
+        render();
+        if(checked>0){const b=document.getElementById('scan-btn');if(b){b.style.background='var(--green)';b.textContent='✓ '+checked+' auto checked in';setTimeout(()=>{b.style.background='';b.textContent='🔄 Scan All Returns';},3000);}}
+        return;
+      }
+    }catch(e){}
+    if(tries>=18){clearInterval(poll);if(btn){btn.disabled=false;btn.textContent='🔄 Scan All Returns';}render();}
+  },10000);
 }
-function incomingV(){
-  const d=incomingData;
-  if(!d||(!(d.incoming||[]).length&&!(d.arrived||[]).length))return `<div class="empty"><h3>📦 No incoming cores right now</h3><p>The UPS scan runs each morning (~7am). Hit ⬇ Pull from cloud after that to refresh.</p><button class="btn-g" onclick="syncFromCloud().then(c=>{if(c)render();})">⬇ Pull from cloud</button></div>`;
-  const inc=d.incoming||[],arr=d.arrived||[];
-  const today=inc.filter(r=>r.etaDays!=null&&r.etaDays<=0);
-  const week=inc.filter(r=>r.etaDays!=null&&r.etaDays>0&&r.etaDays<=7);
-  const later=inc.filter(r=>r.etaDays==null||r.etaDays>7);
-  const row=(r,withEta)=>`<tr style="border-top:1px solid var(--border)"><td style="padding:8px 6px"><b>#${r.order}</b> ${r.name}<div style="font-size:11px;color:var(--text3)">${r.desc||''}</div></td><td style="padding:8px 6px;white-space:nowrap">${withEta?(r.eta||'?'):''}</td><td style="padding:8px 6px;color:var(--text2)">${r.status||''}</td><td style="padding:8px 6px"><a href="https://www.ups.com/track?tracknum=${r.tn||''}" target="_blank" style="color:var(--blue)">${r.tn?r.tn.slice(-8):''}</a></td></tr>`;
-  const sec=(title,list,color,withEta)=>list.length?`<h3 style="margin:16px 0 4px;color:${color};font-size:14px">${title} (${list.length})</h3><table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="text-align:left;color:var(--text3);font-size:10px;text-transform:uppercase;letter-spacing:.5px"><th style="padding:4px 6px">Order</th><th>ETA</th><th>Status</th><th>Tracking</th></tr>${list.map(r=>row(r,withEta)).join('')}</table>`:'';
-  return `<div style="max-width:880px">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-      <h2 style="margin:0">📦 Incoming Cores</h2>
-      <div style="display:flex;gap:8px">
-        <button class="btn-p" id="scan-btn" style="font-size:12px;padding:6px 12px" onclick="scanNow(this)">🔄 Scan tracking now</button>
-        <button class="btn-g" style="font-size:12px;padding:6px 12px" onclick="syncFromCloud().then(c=>{if(c)render();})">⬇ Refresh</button>
-      </div>
-    </div>
-    <div style="font-size:11px;color:var(--text3);margin-bottom:10px">UPS scan as of ${d.computedAt||'?'}</div>
-    <div style="font-size:14px;margin-bottom:6px"><b style="color:var(--blue)">${inc.length}</b> in transit &middot; <b style="color:var(--green)">${arr.length}</b> delivered (check in) &middot; ${d.notShippedCount||0} not shipped</div>
-    ${sec('✅ Delivered — check in &amp; mark returned',arr,'var(--green)',false)}
-    ${sec('Arriving today / due',today,'var(--amber)',true)}
-    ${sec('Arriving this week',week,'var(--blue)',true)}
-    ${sec('Later / no ETA',later,'var(--text3)',true)}
-  </div>`;
+function autoCheckIn(data){
+  if(!data?.arrived?.length)return 0;
+  let count=0;
+  data.arrived.forEach(r=>{
+    if(!r.tn)return;
+    const tn=r.tn.trim();
+    orders.forEach(o=>{
+      if(!o.returnSent||isOrderReturned(o))return;
+      const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
+      if(tNums.includes(tn)){
+        if(!o.returnedNums)o.returnedNums=[];
+        if(!o.returnedNums.includes(tn)){o.returnedNums.push(tn);o.returnUsed=isOrderReturned(o);count++;}
+      }
+    });
+  });
+  if(count>0)saveAll();
+  return count;
 }
+function incomingV(){return labelsV();}
 function buildView(){
   if(view==='daily')return dailyV();if(view==='summary')return summaryV();
   if(view==='production')return productionV();
-  if(view==='entry')return entryV();if(view==='labels')return labelsV();
-  if(view==='incoming')return incomingV();
+  if(view==='entry')return entryV();if(view==='labels'||view==='incoming')return labelsV();
   if(view==='history')return histV();if(view==='settings')return settV();
 }
 
-function buildEmailLines(o){
+function getReminderTemplate(o,num){
+  const name=(o.customerName||'').trim().split(' ')[0]||'Customer';
   const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
-  const lines=[
-    'Hi,','',
-    'This is a friendly reminder that we have not yet received the core return for your order.',
-    '','Order #: '+o.orderNum,'Description: '+o.description,'Fulfillment date: '+o.date,
-  ];
-  if(tNums.length)lines.push('Return tracking #(s): '+tNums.join(', '));
-  lines.push('');
-  // Append the editable template footer
-  emailTemplate.split('\n').forEach(l=>lines.push(l));
-  return lines.join('\n');
+  const hdr='Hi '+name+',\n\nOrder #: '+o.orderNum+'\nDescription: '+o.description+'\nShip date: '+o.date+(tNums.length?'\nReturn label: '+tNums.join(', '):'')+'\n\n';
+  if(num===1)return hdr+'Just a friendly reminder — we haven\'t received your core return yet.\n\nYour return label was included with your order. You can drop the core off at any UPS location — no packaging needed, just hand it to the driver or drop it in a UPS box.\n\nIf you\'ve already shipped it back, please disregard this message.\n\nThank you for your business!\nHeavy Duty Parts Company';
+  if(num===2)return hdr+'This is a follow-up on your core return. We still haven\'t received it.\n\nPlease ship your core back at your earliest convenience using the return label provided. If you need a new label, just reply to this email.\n\nThank you,\nHeavy Duty Parts Company';
+  if(num===3)return hdr+'This is your third notice regarding your outstanding core return.\n\nWe need to receive your core immediately. Please drop it off at any UPS location now. Failure to return the core may result in a core charge being applied to your account and will void your warranty.\n\nContact us right away if there is an issue.\n\nHeavy Duty Parts Company';
+  return hdr+'FINAL NOTICE — Your core has not been returned despite multiple reminders.\n\nYou must return the core within 7 days of this notice or a core charge will be applied to your account and your warranty will be voided.\n\nThis is your last opportunity to resolve this before further action is taken.\n\nHeavy Duty Parts Company';
 }
-function toggleEmail(ordId){
-  if(showEmailFor.has(ordId))showEmailFor.delete(ordId);
-  else showEmailFor.add(ordId);
-  render();
-}
-function copyEmail(ordId){
+function sendReminderAndLog(ordId){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
-  const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
-  const lines=[
-    'Hi,','',
-    'This is a friendly reminder that we have not yet received the core return for your order.',
-    '','Order #: '+o.orderNum,'Description: '+o.description,'Order date: '+o.date,
-  ];
-  if(tNums.length)lines.push('Return tracking number(s): '+tNums.join(', '));
-  lines.push('',
-    'Your core return label was included with your order.',
-    'Please drop the core off at any UPS location at your earliest convenience.',
-    '','If you have already shipped the core back, please disregard this message.',
-    'If you need a new label or have any questions, please reply to this email.',
-    '','Thank you for your business!','','Heavy Duty Parts Company'
-  );
-  navigator.clipboard.writeText(lines.join('\n')).then(()=>{
-    const btn=document.getElementById('copy-btn-'+ordId);
-    if(btn){btn.textContent='Copied!';setTimeout(()=>btn.textContent='Copy',1500);}
-  }).catch(()=>{
-    const ta=document.createElement('textarea');ta.value=text;
-    document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
-    const btn=document.getElementById('copy-btn-'+ordId);
-    if(btn){btn.textContent='Copied!';setTimeout(()=>btn.textContent='Copy',1500);}
-  });
+  if(!o.customerEmail){alert('No email address saved for this order. Add one via Edit.');return;}
+  const num=(o.reminderLog||[]).length+1;
+  const body=getReminderTemplate(o,num);
+  const subj='Core Return'+(num>1?' – Follow Up':'')+' – Order #'+o.orderNum;
+  pushUndo();
+  if(!o.reminderLog)o.reminderLog=[];
+  const d=new Date();
+  o.reminderLog.push((d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear());
+  saveAll();render();
+  window.open('mailto:'+o.customerEmail+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body));
 }
-function emailCoreReminder(ordId){
-  const o=orders.find(x=>x.id===ordId);
-  if(!o)return;
-  const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
-  const lines=[
-    'Hi,',
-    '',
-    'This is a friendly reminder that we have not yet received the core return for your order.',
-    '',
-    'Order #: '+o.orderNum,
-    'Description: '+o.description,
-    'Order date: '+o.date,
-  ];
-  if(tNums.length)lines.push('Return tracking number(s): '+tNums.join(', '));
-  lines.push(
-    '',
-    'Your core return label was included with your order. Please drop the core off at any UPS location at your earliest convenience.',
-    '',
-    'If you have already shipped the core back, please disregard this message.',
-    'If you need a new label or have any questions, please reply to this email.',
-    '',
-    'Thank you for your business!',
-    '',
-    'Heavy Duty Parts Company'
-  );
-  const subject='Core Return Reminder - Order '+o.orderNum;
-  const body=lines.join('\r\n');
-  const mailto='mailto:'+(o.customerEmail||'')+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
-  const a=document.createElement('a');
-  a.href=mailto;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-}
+function buildEmailLines(o){return getReminderTemplate(o,(o.reminderLog||[]).length+1);}
+function toggleEmail(){}
+function copyEmail(ordId){const o=orders.find(x=>x.id===ordId);if(!o)return;navigator.clipboard.writeText(getReminderTemplate(o,(o.reminderLog||[]).length+1)).catch(()=>{});}
+function emailCoreReminder(ordId){sendReminderAndLog(ordId);}
 // ── DAILY LEDGER ──────────────────────────────────────────────────────────────
 function dailyV(){
   const dated=byDate();
@@ -1541,298 +1493,150 @@ function daysAged(dateStr){
 }
 
 function labelsV(){
-  const q=coreSearch.trim().toLowerCase();
-  const dfrom=coreDateFrom?pd(coreDateFrom):null;
-  const dto=coreDateTo?pd(coreDateTo):null;
-  function matchesFilter(o){
-    if(q){const hay=o.orderNum.toLowerCase()+' '+o.description.toLowerCase()+' '+(o.trackingNumbers||[]).join(' ').toLowerCase()+' '+(o.customerEmail||'').toLowerCase();if(!hay.includes(q))return false;}
-    if(dfrom||dto){const od=pd(o.date);if(dfrom&&od<dfrom)return false;if(dto&&od>dto)return false;}
-    return true;
-  }
-  const isFiltered=q||dfrom||dto;
+  const inTransitTNs=new Set((incomingData?.incoming||[]).map(r=>r.tn?.trim()).filter(Boolean));
+  const arrivedTNs=new Set((incomingData?.arrived||[]).map(r=>r.tn?.trim()).filter(Boolean));
+  let scanAge=null;
+  if(incomingData?.computedAt){try{const m=Math.round((Date.now()-new Date(incomingData.computedAt))/60000);scanAge=m<2?'just now':m<60?m+'m ago':Math.round(m/60)+'h ago';}catch(ex){scanAge=incomingData.computedAt;}}
 
-  const wl=orders.filter(o=>o.returnSent);
-  const allPending=wl.filter(o=>!isOrderReturned(o)&&!o.warrantyVoided);
-  const inWindow=allPending.filter(o=>daysAged(o.date)<=coreReturnDays);
-  const overdue=allPending.filter(o=>daysAged(o.date)>coreReturnDays);
-  const allReturned=wl.filter(o=>isOrderReturned(o)&&!o.warrantyVoided);
-  const voided=orders.filter(o=>o.warrantyVoided);
-  const pAmt=allPending.reduce((s,o)=>s+n(o.returnCost),0);
-  const rAmt=allReturned.reduce((s,o)=>s+n(o.returnCost),0);
-  const coreValueAtRisk=allPending.reduce((s,o)=>s+n(o.coreValue),0);
-
-  // ── Count individual cores (each tracking number = 1 core, or 1 if no tracking nums) ──
-  function coreCount(orderList){return orderList.reduce((s,o)=>{const t=(o.trackingNumbers||[]).filter(x=>x.trim()).length;return s+(t>0?t:1);},0);}
-  function coreValueSum(orderList){return orderList.reduce((s,o)=>s+n(o.coreValue),0);}
-  function returnedCoreCount(orderList){return orderList.reduce((s,o)=>{const tNums=(o.trackingNumbers||[]).filter(x=>x.trim());const rn=o.returnedNums||[];if(tNums.length>0)return s+rn.filter(r=>tNums.includes(r)).length;return s+(o.returnUsed?1:0);},0);}
-
-  const totalCores=coreCount(wl);
-  const inWindowCores=coreCount(inWindow);
-  const overdueCores=coreCount(overdue);
-  const returnedCores=coreCount(allReturned);
-  const returnedValue=coreValueSum(allReturned);
-  const retRate=totalCores>0?Math.round(returnedCores/totalCores*100):0;
-
-  // Average days to return for completed returns
-  const returnTimes=allReturned.filter(o=>o.date).map(o=>daysAged(o.date));
-  const avgDays=returnTimes.length?Math.round(returnTimes.reduce((s,d)=>s+d,0)/returnTimes.length):null;
-  // Avg days outstanding for pending
-  const pendingDays=allPending.filter(o=>o.date).map(o=>daysAged(o.date));
-  const avgPendingDays=pendingDays.length?Math.round(pendingDays.reduce((s,d)=>s+d,0)/pendingDays.length):null;
-
-  const pastDue=allPending.filter(o=>daysAged(o.date)>coreReturnDays);
-  const summaryBar=`<div style="display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--border);border-radius:var(--rl);overflow:hidden;margin-bottom:12px">
-    <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Total cores</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh)">${totalCores}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">${wl.length} order${wl.length!==1?'s':''}</div>
-    </div>
-    <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">In window</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:var(--green)">${inWindowCores}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">within ${coreReturnDays}d · ${inWindow.length} order${inWindow.length!==1?'s':''}</div>
-    </div>
-    <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Overdue</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:#f87171">${overdueCores}</div>
-      <div style="font-size:10px;color:var(--amber);margin-top:1px;font-weight:600">${coreValueAtRisk>0?$$(coreValueAtRisk,2)+' at risk':overdue.length+' order'+(overdue.length!==1?'s':'')}</div>
-    </div>
-    <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Returned</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:var(--green)">${returnedCores}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">${returnedValue>0?$$(returnedValue,2)+' value recovered':allReturned.length+' order'+(allReturned.length!==1?'s':'')}</div>
-    </div>
-    <div style="padding:12px 14px;border-right:1px solid var(--border);background:var(--bg2)">
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Return rate</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:${retRate>=80?'var(--green)':retRate>=50?'var(--amber)':'#f87171'}">${retRate}%</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">${voided.length} voided</div>
-    </div>
-    <div style="padding:12px 14px;background:var(--bg2)">
-      <div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px">Avg pending age</div>
-      <div style="font-size:20px;font-weight:800;font-family:var(--fh);color:${avgPendingDays!=null&&avgPendingDays>coreReturnDays?'#f87171':avgPendingDays!=null&&avgPendingDays>coreReturnDays*.7?'var(--amber)':'var(--text)'}">${avgPendingDays!=null?avgPendingDays+'d':'—'}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">${avgDays!=null?'avg return: '+avgDays+'d':'policy: '+coreReturnDays+'d'}</div>
-    </div>
-  </div>`;
-
-  // ── Filter + Search bar ────────────────────────────────────────────────────
-  function filterBtn(label,val,count,danger=false){
-    const on=coreFilter===val;
-    const ac=danger?'#f87171':'var(--red)';
-    const acBg=danger?'rgba(248,113,113,.12)':'rgba(204,0,0,.15)';
-    return `<button onclick="coreFilter='${val}';document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();" style="padding:5px 14px;font-size:12px;font-weight:600;border-radius:var(--r);border:1px solid ${on?ac:(danger&&count>0?'rgba(248,113,113,.4)':'var(--border2)')};background:${on?acBg:'transparent'};color:${on?ac:(danger&&count>0?'#f87171':'var(--text2)')};cursor:pointer;font-family:var(--fh);text-transform:uppercase;letter-spacing:.4px">${label} <span style="font-size:10px;opacity:.7">(${count})</span></button>`;
-  }
-
-  const filterBar=`<div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:10px 12px;margin-bottom:12px">
-    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-      ${filterBtn('All','all',wl.length)}
-      ${filterBtn('In window','inwindow',inWindow.length)}
-      ${filterBtn('Overdue','overdue',overdue.length,true)}
-      ${filterBtn('Returned','returned',allReturned.length)}
-      <div style="margin-left:auto;display:flex;gap:6px;align-items:center">
-
-        <input type="text" id="core-search-inp" class="inp-base" value="${e(coreSearch)}" placeholder="Search order #, description, tracking #…" style="min-width:200px;padding:6px 10px;font-size:12px" onkeydown="if(event.key==='Enter')runCoreSearch()">
-        <button class="btn-p" style="padding:6px 14px;font-size:12px" onclick="runCoreSearch()">Search</button>
-        ${isFiltered?`<button class="btn-s" onclick="clearCoreSearch()">✕</button>`:''}
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600;flex-shrink:0">Date range:</span>
-      <input type="text" id="core-from" class="inp-base" value="${e(coreDateFrom)}" placeholder="From M/D/YYYY" style="width:120px;padding:5px 8px;font-size:12px" onkeydown="if(event.key==='Enter')runCoreSearch()">
-      <span style="font-size:11px;color:var(--text3)">—</span>
-      <input type="text" id="core-to" class="inp-base" value="${e(coreDateTo)}" placeholder="To M/D/YYYY" style="width:120px;padding:5px 8px;font-size:12px" onkeydown="if(event.key==='Enter')runCoreSearch()">
-    </div>
-  </div>`;
-
-  let html=summaryBar+filterBar;
-  if(!wl.length){return html+`<div class="empty"><h3>No cores tracked yet</h3><p>Add a return label to an order to start tracking.</p></div>`;}
-
-  // Apply view filter
-  let viewOrders;
-  if(coreFilter==='inwindow') viewOrders=inWindow.filter(matchesFilter);
-  else if(coreFilter==='overdue') viewOrders=overdue.filter(matchesFilter);
-  else if(coreFilter==='returned') viewOrders=allReturned.filter(matchesFilter);
-  else viewOrders=wl.filter(matchesFilter);
-
-  // Derive view sublists from viewOrders
-  const viewInWindow=viewOrders.filter(o=>!isOrderReturned(o)&&!o.warrantyVoided&&daysAged(o.date)<=coreReturnDays);
-  const viewOverdue=viewOrders.filter(o=>!isOrderReturned(o)&&!o.warrantyVoided&&daysAged(o.date)>coreReturnDays);
-  const viewReturned=viewOrders.filter(o=>isOrderReturned(o)&&!o.warrantyVoided);
-  const viewVoided=viewOrders.filter(o=>o.warrantyVoided);
-
-  // ── Build the list ────────────────────────────────────────────────────────
-  // All pending = combine in-window + overdue, sort: unreminded first (oldest top),
-  // reminded last (least recently reminded first)
-  function sortPending(list){
-    return [...list].sort(function(a,b){
-      const aRem=(a.reminderLog||[]).length>0;
-      const bRem=(b.reminderLog||[]).length>0;
-      if(aRem!==bRem) return aRem?1:-1;
-      if(!aRem) return pd(a.date)-pd(b.date); // oldest first
-      const aLast=a.reminderLog[a.reminderLog.length-1];
-      const bLast=b.reminderLog[b.reminderLog.length-1];
-      return pd(aLast)-pd(bLast);
-    });
-  }
-
-  // Use the already-filtered view lists
-  const pendingToShow=coreFilter==='inwindow'?viewInWindow
-    :coreFilter==='overdue'?viewOverdue
-    :coreFilter==='returned'?[]
-    :[...viewInWindow,...viewOverdue]; // 'all'
-
-  if(coreFilter!=='returned'&&pendingToShow.length){
-    html+=lblSec('Outstanding — pending return',pendingToShow,false);
-  } else if(coreFilter!=='returned'&&!pendingToShow.length&&!viewReturned.length&&!viewVoided.length){
-    html+='<div style="padding:30px;text-align:center;color:var(--green);font-weight:600">✓ No outstanding cores</div>';
-  }
-
-  if(viewReturned.length){
-    const rTotal=viewReturned.reduce((s,o)=>s+n(o.returnCost),0);
-    html+='<hr class="divider">';
-    html+=lblSec('Returned — '+$$(rTotal,2)+' recovered',viewReturned,true);
-  }
-  if(viewVoided.length){
-    html+='<hr class="divider"><div style="font-size:10px;font-weight:700;color:#f87171;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">⚠ Warranty voided ('+viewVoided.length+')</div>';
-    html+=viewVoided.map(o=>'<div class="lbl-card used" style="border-color:rgba(204,0,0,.3)"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-weight:700;font-size:14px">#'+e(o.orderNum)+'</div><div style="font-size:12px;color:var(--text3)">'+o.date+' &middot; '+e(o.description)+'</div></div><span class="badge" style="background:rgba(204,0,0,.15);color:#f87171;border:1px solid rgba(204,0,0,.3)">WARRANTY VOID</span></div><div style="margin-top:6px;font-size:11px;color:var(--text3)">Core not returned after 90+ days — warranty voided.</div><button class="btn-s" style="margin-top:6px;font-size:10px" data-oid="'+o.id+'" onclick="(function(id){pushUndo();const x=orders.find(o=>o.id===id);x.warrantyVoided=false;x.returnUsed=false;x.returnedNums=[];saveAll();render();})(this.dataset.oid)">undo write-off</button></div>').join('');
-  }
-  if(!pendingToShow.length&&!viewReturned.length&&!viewVoided.length){
-    html+='<div style="padding:30px;text-align:center;color:var(--text3)">No orders match your current filter.</div>';
-  }
-    return html;
-}
-function checkAllTracking(pendingOnly=true){
-  // Collect all untracked tracking numbers from pending cores
-  const source=pendingOnly
-    ? orders.filter(o=>o.returnSent&&!isOrderReturned(o)&&!o.warrantyVoided)
-    : orders.filter(o=>o.returnSent);
-  const allNums=[];
-  source.forEach(o=>{
-    const rn=o.returnedNums||[];
-    (o.trackingNumbers||[]).filter(t=>t.trim()).forEach(t=>{
-      if(!pendingOnly||!rn.includes(t))allNums.push(t.trim());
-    });
+  const withLabels=orders.filter(o=>o.returnSent&&!o.warrantyVoided);
+  const overdue=[],inTransit=[],inWindow=[],returned=[],arrived=[];
+  withLabels.forEach(o=>{
+    if(isOrderReturned(o)){returned.push(o);return;}
+    const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
+    if(tNums.length&&tNums.some(t=>arrivedTNs.has(t))){arrived.push(o);return;}
+    if(tNums.length&&tNums.some(t=>inTransitTNs.has(t))){inTransit.push(o);return;}
+    daysAged(o.date)>coreReturnDays?overdue.push(o):inWindow.push(o);
   });
-  if(!allNums.length){
-    alert(pendingOnly?'No pending tracking numbers found. All cores may already be marked returned.':'No tracking numbers found.');
-    return;
-  }
-  // Open one tab per number — UPS bulk URL doesn't work reliably
-  if(allNums.length>10){
-    if(!confirm('This will open '+allNums.length+' UPS tracking tabs — one per tracking number. Continue?'))return;
-  }
-  allNums.forEach(t=>window.open('https://www.ups.com/track?tracknum='+encodeURIComponent(t),'_blank'));
-}
-// setTracking replaced by trackingNumbers array
-function lcard(o,isUsed){
-  const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
-  const rn=o.returnedNums||[];
-  const allRet=isOrderReturned(o);
-  const oid=o.id;
-  const remLog=o.reminderLog||[];
-  const dAge=daysAged(o.date);
-  const isOverdue=dAge>coreReturnDays;
-  let trackSection='';
-  if(tNums.length){
-    let numRows='';
-    tNums.forEach(function(t){
-      const ret=rn.includes(t);
-      numRows+='<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">'
-        +'<input type="checkbox" '+(ret?'checked ':'')+'data-oid="'+oid+'" data-trk="'+t+'" onclick="event.stopPropagation()" onchange="handleTrackChk(this)" style="accent-color:var(--green);width:14px;height:14px;cursor:pointer;flex-shrink:0">'
-        +'<span style="font-family:monospace;font-size:12px;flex:1;color:var(--text2)">'+e(t)+'</span>'
-        +'<button data-t="'+t+'" onclick="event.stopPropagation();openUPS([this.dataset.t])" style="font-size:11px;color:var(--blue);background:transparent;border:1px solid rgba(59,130,246,.35);border-radius:4px;padding:3px 8px;cursor:pointer;white-space:nowrap;flex-shrink:0">Track ↗</button>'
-        +'<span style="font-size:10px;font-weight:600;color:'+(ret?'var(--green)':'var(--amber)')+';white-space:nowrap;flex-shrink:0;min-width:60px;text-align:right">'+(ret?'✓ returned':'pending')+'</span></div>';
-    });
-    const summary=allRet?'<span style="font-size:11px;font-weight:600;color:var(--green)">✓ All returned</span>':'<span style="font-size:11px;font-weight:600;color:var(--amber)">'+rn.length+'/'+tNums.length+' returned</span>';
-    trackSection='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600">Tracking</span>'+summary+'</div>'+numRows+'</div>';
-  } else {
-    trackSection='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" '+(allRet?'checked ':'')+'data-oid="'+oid+'" onclick="event.stopPropagation()" onchange="handleCoreChk(this)" style="accent-color:var(--green);width:15px;height:15px;cursor:pointer"><span style="font-size:13px;font-weight:600;color:'+(allRet?'var(--green)':'var(--amber)')+'">'+(allRet?'✓ Core returned':'Awaiting core return')+'</span></label></div>';
-  }
-  let reminderSection='';
-  if(!allRet&&isOverdue){
-    if(remLog.length===0){
-      reminderSection='<div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 12px;background:rgba(234,179,8,.07);border:1px solid rgba(234,179,8,.25);border-radius:var(--r)">'
-        +'<span style="font-size:12px;color:var(--amber);font-weight:600">⚠ No reminder sent &mdash; '+dAge+'d old</span>'
-        +'<button data-id="'+oid+'" onclick="event.stopPropagation();logReminderAndRefresh(this.dataset.id)" class="btn-p" style="font-size:12px;padding:6px 16px;background:var(--amber);white-space:nowrap">✉ Reminder Sent</button>'
-        +'</div>';
-    } else {
-      const lastDate=remLog[remLog.length-1];
-      const lp=lastDate.split('/').map(Number);
-      const daysSinceLast=Math.floor((new Date()-new Date(lp[2],lp[0]-1,lp[1]))/(1000*60*60*24));
-      reminderSection='<div style="margin-top:10px;padding:10px 12px;background:rgba(34,197,94,.07);border:1px solid rgba(34,197,94,.25);border-radius:var(--r)">'
-        +'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'
-        +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
-        +'<span style="font-size:12px;color:var(--green);font-weight:600">✉ Reminded:</span>'
-        +remLog.map(function(d,i){return'<span style="font-size:11px;background:var(--bg3);border:1px solid rgba(34,197,94,.3);border-radius:4px;padding:2px 8px;color:var(--green)">'+(i===0?'1st':i===1?'2nd':i===2?'3rd':(i+1)+'th')+' '+d+'</span>';}).join('')
-        +'<button style="font-size:10px;background:transparent;border:1px solid var(--border);border-radius:4px;padding:2px 7px;cursor:pointer;color:var(--text3)" data-id="'+oid+'" data-idx="'+(remLog.length-1)+'" onclick="event.stopPropagation();removeReminder(this.dataset.id,parseInt(this.dataset.idx))">undo</button>'
-        +'</div>'
-        +'<button data-id="'+oid+'" onclick="event.stopPropagation();logReminderAndRefresh(this.dataset.id)" class="btn-grn" style="font-size:11px;padding:4px 12px;white-space:nowrap">+ Log another</button>'
-        +'</div></div>';
-    }
-  }
-  const showEmail=showEmailFor.has(o.id);
-  const emailLines=buildEmailLines(o);
-  const to=o.customerEmail?e(o.customerEmail):'';
-  const emailSection=showEmail?'<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">'
-    +(to?'<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding:6px 10px;background:var(--bg3);border-radius:5px;border:1px solid var(--border2)"><span style="font-size:10px;color:var(--text3);font-weight:600;flex-shrink:0">TO:</span><span style="font-size:13px;font-weight:600;flex:1">'+to+'</span><button class="btn-s" style="font-size:10px" data-email="'+to+'" onclick="event.stopPropagation();navigator.clipboard.writeText(this.dataset.email)">Copy</button></div>'
-      :'<div style="font-size:11px;color:var(--text3);margin-bottom:8px">No email saved — add via edit order</div>')
-    +'<pre style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:10px 12px;font-size:11px;color:var(--text2);white-space:pre-wrap;font-family:inherit;line-height:1.6;word-break:break-word;">'+e(emailLines)+'</pre>'
-    +'<button class="btn-s" id="copy-btn-'+oid+'" style="margin-top:6px;font-size:11px" data-oid="'+oid+'" onclick="event.stopPropagation();copyEmail(this.dataset.oid)">Copy to clipboard</button>'
-    +'</div>':'';
-  const daysLeft=coreReturnDays-dAge;
-  const dueLabel=allRet?'':(daysLeft>0?' <span style="font-size:10px;font-weight:600;color:var(--green)">due in '+daysLeft+'d</span>':(daysLeft===0?' <span style="font-size:10px;font-weight:600;color:var(--amber)">due today</span>':(daysLeft>-10?' <span style="font-size:10px;font-weight:600;color:var(--amber)">'+Math.abs(daysLeft)+'d overdue</span>':' <span style="font-size:10px;font-weight:600;color:#f87171">'+Math.abs(daysLeft)+'d overdue</span>')));
-  return '<div class="lbl-card'+(allRet?' used':'')+'" style="cursor:pointer" data-oid="'+o.id+'" onclick="toggleCoreExpand(this.dataset.oid)">'
-    +'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">'
-    +'<div><div style="font-weight:700;font-size:15px;font-family:var(--fh)">Order #'+e(o.orderNum)+dueLabel+'</div>'
-    +'<div style="font-size:12px;color:var(--text2);margin-top:2px">'+e(o.description)+'</div>'
-    +'<div style="font-size:11px;color:var(--text3);margin-top:1px">'+o.date+(to?' &middot; '+to:'')+(n(o.coreValue)>0?' <span style="color:var(--amber);font-weight:600">&middot; core value: '+$$(n(o.coreValue),2)+'</span>':'')+'</div>'
-    +'</div><span class="badge '+(allRet?'bdg-u':'bdg-p')+'">'+(allRet?'returned':'pending')+'</span></div>'
-    +trackSection
-    +reminderSection
-    +'<div class="fc-row" style="flex-wrap:wrap;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">'
-    +'<label style="font-size:11px;color:var(--text3)">Charge ($)</label>'
-    +'<input type="number" value="'+o.returnCost+'" placeholder="0.00" style="width:90px;border:1px solid var(--border2);border-radius:var(--r);padding:5px 8px;font-size:13px;font-family:var(--fb);background:var(--bg2);color:var(--text)" data-oid="'+oid+'" onclick="event.stopPropagation()" oninput="setLblCost(this.dataset.oid,this.value)">'
-    +'<button class="btn-s" style="'+(showEmail?'color:var(--green);border-color:var(--green)':'')+'" data-oid="'+oid+'" onclick="event.stopPropagation();toggleEmail(this.dataset.oid)">'+(showEmail?'▲ hide':'✉ email template')+'</button>'
-    +'<button class="btn-s" style="margin-left:auto" data-oid="'+oid+'" onclick="event.stopPropagation();editOrd(this.dataset.oid)">edit</button>'
-    +emailSection
-    +'</div></div>';
-}
+  const voided=orders.filter(o=>o.warrantyVoided);
+  overdue.sort((a,b)=>daysAged(b.date)-daysAged(a.date));
 
-function buildReminderLog(o){
-  const log=o.reminderLog||[];
-  let html='<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">';
-  html+='<div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600;margin-bottom:6px">Reminder history</div>';
-  if(log.length){
-    log.forEach(function(d,i){
-      html+='<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">'
-        +'<span style="color:var(--green);font-weight:600">✓</span>'
-        +'<span style="color:var(--text2)">'+(i===0?'Reminder 1':'Follow-up '+(i))+'</span>'
-        +'<span style="font-weight:600;margin-left:2px">'+d+'</span>'
-        +'<button class="btn-s" style="font-size:9px;padding:1px 5px;margin-left:auto" data-id="'+o.id+'" data-i="'+i+'" onclick="event.stopPropagation();removeReminder(this.dataset.id,parseInt(this.dataset.i))">×</button>'
-        +'</div>';
-    });
-  } else {
-    html+='<div style="font-size:11px;color:var(--text3);margin-bottom:6px">No reminders logged yet.</div>';
+  if(!withLabels.length&&!voided.length)return`<div class="empty"><h3>No cores tracked yet</h3><p>Add a return label to an order to start tracking.</p></div>`;
+
+  const coreValueAtRisk=overdue.reduce((s,o)=>s+n(o.coreValue),0);
+
+  let html=`<div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg2);border:1px solid var(--border);border-radius:var(--rl);padding:12px 16px;margin-bottom:14px">
+    <div>
+      <div style="font-size:13px;font-weight:600;color:var(--text)">Scan return labels to check UPS status</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px">${scanAge?'Last scan: '+scanAge+' · Delivered cores auto-checked in':'No scan data yet — hit Scan to check UPS'}</div>
+    </div>
+    <button id="scan-btn" onclick="scanAllReturns(this)" style="background:var(--red);border:none;color:#fff;padding:9px 20px;border-radius:var(--r);font-size:13px;font-weight:700;font-family:var(--fh);text-transform:uppercase;letter-spacing:.5px;cursor:pointer">🔄 Scan All Returns</button>
+  </div>`;
+
+  if(arrived.length){
+    html+=`<div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.3);border-radius:var(--rl);padding:12px 16px;margin-bottom:14px">
+      <div style="font-weight:700;color:var(--green);margin-bottom:6px">✅ ${arrived.length} core${arrived.length>1?'s':''} delivered — checking in…</div>
+      ${arrived.map(o=>`<div style="font-size:12px;color:var(--text2);padding:2px 0">Order #${e(o.orderNum)} · ${e(o.description)}</div>`).join('')}
+    </div>`;
   }
-  html+='<button class="btn-grn" style="font-size:11px;padding:4px 12px;margin-top:6px" data-id="'+o.id+'" onclick="event.stopPropagation();logReminder(this.dataset.id)">+ Log reminder sent today</button>';
-  html+='</div>';
+
+  if(overdue.length){
+    html+=`<div style="font-size:10px;font-weight:700;color:#f87171;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">⚠ Overdue — ${overdue.length} core${overdue.length>1?'s':''} past ${coreReturnDays} days${coreValueAtRisk>0?' · '+$$(coreValueAtRisk,2)+' at risk':''}</div>`;
+    html+=overdue.map(o=>coreCard(o,'overdue',inTransitTNs)).join('');
+  }
+
+  if(inTransit.length){
+    html+=`<div style="font-size:10px;font-weight:700;color:#60a5fa;text-transform:uppercase;letter-spacing:.7px;margin:${overdue.length?'16px':0} 0 8px">📦 In Transit — ${inTransit.length} core${inTransit.length>1?'s':''} on the way back</div>`;
+    html+=inTransit.map(o=>coreCard(o,'in_transit',inTransitTNs)).join('');
+  }
+
+  if(inWindow.length){
+    html+=`<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin:${overdue.length||inTransit.length?'16px':0} 0 8px">⏳ Pending — ${inWindow.length} within ${coreReturnDays}-day window</div>`;
+    html+=inWindow.map(o=>coreCard(o,'in_window',inTransitTNs)).join('');
+  }
+
+  if(returned.length){
+    const showR=expandedCores.has('__returned__');
+    html+=`<hr style="border:none;border-top:1px solid var(--border);margin:16px 0"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${showR?'8px':'0'}"><div style="font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:.7px">✓ Returned — ${returned.length} core${returned.length>1?'s':''}</div><button class="btn-s" onclick="event.stopPropagation();toggleCoreExpand('__returned__')" style="font-size:11px">${showR?'▲ Hide':'▼ Show'}</button></div>`;
+    if(showR)html+=returned.sort((a,b)=>pd(b.date)-pd(a.date)).map(o=>coreCard(o,'returned',inTransitTNs)).join('');
+  }
+
+  if(voided.length){
+    html+=`<div style="margin-top:16px"><div style="font-size:10px;font-weight:700;color:#f87171;text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">⚠ Warranty Voided (${voided.length})</div>${voided.map(o=>`<div style="background:var(--bg2);border:1px solid rgba(204,0,0,.3);border-radius:var(--rl);padding:12px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center"><div><div style="font-weight:700">Order #${e(o.orderNum)}</div><div style="font-size:12px;color:var(--text3)">${o.date} · ${e(o.description)}</div></div><button class="btn-s" style="font-size:10px" data-oid="${o.id}" onclick="(function(id){pushUndo();const x=orders.find(o=>o.id===id);x.warrantyVoided=false;x.returnUsed=false;x.returnedNums=[];saveAll();render();})(this.dataset.oid)">undo write-off</button></div>`).join('')}</div>`;
+  }
+
   return html;
 }
+
+function coreCard(o,status,inTransitTNs){
+  const oid=o.id;
+  const tNums=(o.trackingNumbers||[]).filter(t=>t.trim());
+  const rn=o.returnedNums||[];
+  const remLog=o.reminderLog||[];
+  const dAge=daysAged(o.date);
+  const isReturned=status==='returned';
+  const border=isReturned?'rgba(34,197,94,.2)':status==='overdue'?'rgba(248,113,113,.3)':status==='in_transit'?'rgba(59,130,246,.2)':'var(--border)';
+
+  const badge=isReturned
+    ?`<span style="font-size:10px;font-weight:700;background:rgba(34,197,94,.15);color:var(--green);border:1px solid rgba(34,197,94,.3);border-radius:4px;padding:2px 8px">RETURNED</span>`
+    :status==='overdue'
+    ?`<span style="font-size:10px;font-weight:700;background:rgba(248,113,113,.12);color:#f87171;border:1px solid rgba(248,113,113,.3);border-radius:4px;padding:2px 8px">${dAge-coreReturnDays}d OVERDUE</span>`
+    :status==='in_transit'
+    ?`<span style="font-size:10px;font-weight:700;background:rgba(59,130,246,.12);color:#60a5fa;border:1px solid rgba(59,130,246,.3);border-radius:4px;padding:2px 8px">IN TRANSIT</span>`
+    :`<span style="font-size:10px;font-weight:700;background:var(--bg3);color:var(--text3);border:1px solid var(--border2);border-radius:4px;padding:2px 8px">${coreReturnDays-dAge}d left</span>`;
+
+  let trackSection='';
+  if(tNums.length){
+    const rows=tNums.map(t=>{
+      const isRet=rn.includes(t);
+      const isIT=inTransitTNs&&inTransitTNs.has(t);
+      const scanEntry=(incomingData?.incoming||[]).find(r=>r.tn?.trim()===t);
+      const etaStr=scanEntry?.eta?' · ETA '+scanEntry.eta:'';
+      const tStatus=isRet?'✓ returned':isIT?'📦 in transit'+etaStr:'pending';
+      const tColor=isRet?'var(--green)':isIT?'#60a5fa':'var(--amber)';
+      return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.05)">`
+        +`<span style="font-family:monospace;font-size:12px;color:var(--text2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e(t)}</span>`
+        +`<a href="https://www.ups.com/track?tracknum=${encodeURIComponent(t)}" target="_blank" style="font-size:11px;color:var(--blue);border:1px solid rgba(59,130,246,.3);border-radius:4px;padding:2px 8px;text-decoration:none;white-space:nowrap;flex-shrink:0">Track ↗</a>`
+        +`<span style="font-size:11px;font-weight:600;color:${tColor};white-space:nowrap;flex-shrink:0;min-width:90px;text-align:right">${tStatus}</span>`
+        +(!isRet?`<input type="checkbox" data-oid="${oid}" data-trk="${e(t)}" onclick="event.stopPropagation()" onchange="handleTrackChk(this)" style="accent-color:var(--green);width:14px;height:14px;cursor:pointer;flex-shrink:0">`:'')
+        +`</div>`;
+    }).join('');
+    trackSection=`<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.05)">${rows}</div>`;
+  } else {
+    trackSection=`<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(255,255,255,.05)"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" ${isReturned?'checked':''} data-oid="${oid}" onclick="event.stopPropagation()" onchange="handleCoreChk(this)" style="accent-color:var(--green);width:15px;height:15px;cursor:pointer"><span style="font-size:13px;color:${isReturned?'var(--green)':'var(--amber)'};font-weight:600">${isReturned?'✓ Core returned':'Mark as returned'}</span></label></div>`;
+  }
+
+  let reminderSection='';
+  if(status==='overdue'){
+    const nextNum=remLog.length+1;
+    const toneLabel=nextNum===1?'1st Reminder — Friendly':nextNum===2?'2nd Reminder — Firmer':nextNum===3?'3rd Reminder — Stern':'Final Notice';
+    const remHistory=remLog.length
+      ?`<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:11px;color:var(--text3)">Sent:</span>${remLog.map((d,i)=>`<span style="font-size:11px;background:var(--bg4);border:1px solid var(--border2);border-radius:4px;padding:2px 6px;color:var(--green)">${['1st','2nd','3rd'][i]||(i+1)+'th'} ${d}</span>`).join('')}<button style="font-size:10px;background:transparent;border:1px solid var(--border);border-radius:3px;padding:1px 6px;cursor:pointer;color:var(--text3)" data-id="${oid}" data-idx="${remLog.length-1}" onclick="event.stopPropagation();removeReminder(this.dataset.id,parseInt(this.dataset.idx))">undo last</button></div>`
+      :`<div style="font-size:11px;color:var(--text3);margin-bottom:8px">No reminders sent yet</div>`;
+    reminderSection=`<div style="margin-top:10px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r)">${remHistory}<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><button data-id="${oid}" onclick="event.stopPropagation();sendReminderAndLog(this.dataset.id)" style="background:var(--red);border:none;color:#fff;padding:7px 16px;border-radius:var(--r);font-size:12px;font-weight:700;font-family:var(--fh);text-transform:uppercase;letter-spacing:.5px;cursor:pointer">✉ ${toneLabel}</button><span style="font-size:10px;color:var(--text3)">Opens email · auto-logs on click</span></div></div>`;
+  }
+
+  return`<div style="background:var(--bg2);border:1px solid ${border};border-radius:var(--rl);padding:14px 16px;margin-bottom:8px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:15px;font-family:var(--fh)">Order #${e(o.orderNum)}</div>
+        <div style="font-size:13px;color:var(--text2);margin-top:1px">${e(o.description)}</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${o.customerName?e(o.customerName)+' · ':''} Shipped ${o.date}${o.customerEmail?' · 📧 '+e(o.customerEmail):''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;margin-left:12px">
+        ${badge}
+        ${n(o.coreValue)>0&&!isReturned?`<span style="font-size:10px;color:var(--amber);font-weight:600">⚠ ${$$(n(o.coreValue),2)} at risk</span>`:''}
+      </div>
+    </div>
+    ${trackSection}
+    ${reminderSection}
+    <div style="display:flex;gap:6px;align-items:center;margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,.05)">
+      <label style="font-size:11px;color:var(--text3)">Return cost $</label>
+      <input type="number" value="${e(String(o.returnCost||''))}" placeholder="0.00" style="width:90px;border:1px solid var(--border2);border-radius:var(--r);padding:4px 8px;font-size:12px;background:var(--bg3);color:var(--text)" data-oid="${oid}" onclick="event.stopPropagation()" oninput="setLblCost(this.dataset.oid,this.value)">
+      <button class="btn-s" style="margin-left:auto" data-oid="${oid}" onclick="event.stopPropagation();editOrd(this.dataset.oid)">edit order</button>
+    </div>
+  </div>`;
+}
+
+function checkAllTracking(){}
+function lcard(o,isUsed){return coreCard(o,isOrderReturned(o)?'returned':daysAged(o.date)>coreReturnDays?'overdue':'in_window',new Set());}
+function buildReminderLog(){}
 function handleTrackChk(el){toggleTrackReturned(el.dataset.oid,el.dataset.trk,el.checked);}
 function handleCoreChk(el){toggleCoreReturned(el.dataset.oid,el.checked);}
 
 function lblSec(title,list,isUsed){
-  const sorted=[...list].sort(function(a,b){
-    if(isUsed) return pd(b.date)-pd(a.date);
-    const aRem=(a.reminderLog||[]).length>0;
-    const bRem=(b.reminderLog||[]).length>0;
-    if(aRem!==bRem) return aRem?1:-1;
-    if(!aRem) return pd(a.date)-pd(b.date);
-    const aLast=a.reminderLog[a.reminderLog.length-1];
-    const bLast=b.reminderLog[b.reminderLog.length-1];
-    return pd(aLast)-pd(bLast);
-  });
-  return'<div style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:8px">'+title+'</div>'+sorted.map(o=>lcard(o,isUsed)).join('');
+  return list.map(o=>lcard(o,isUsed)).join('');
 }
+
 
 function setLblCost(id,v){const o=orders.find(x=>x.id===id);if(o){o.returnCost=v;saveAll();}}
 function markUsed(id){const o=orders.find(x=>x.id===id);if(!o)return;pushUndo();const t=(o.trackingNumbers||[]).filter(x=>x.trim());if(t.length>0){o.returnedNums=[...t];}o.returnUsed=true;saveAll();render();}
@@ -2115,14 +1919,7 @@ function buildAudit(dated,sortedP){
 }
 
 // ── ORDER ACTIONS ─────────────────────────────────────────────────────────────
-function logReminderAndRefresh(id){
-  const o=orders.find(x=>x.id===id);if(!o)return;
-  pushUndo();
-  if(!o.reminderLog)o.reminderLog=[];
-  const d=new Date();
-  o.reminderLog.push((d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear());
-  saveAll();render();
-}
+function logReminderAndRefresh(id){sendReminderAndLog(id);}
 function logReminder(id){
   const o=orders.find(x=>x.id===id);if(!o)return;
   pushUndo();if(!o.reminderLog)o.reminderLog=[];
