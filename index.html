@@ -1954,7 +1954,7 @@ function settV(){
     </div>
     <div class="ss"><div class="ss-title">Reminder Token</div>
       <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.6">Enables the "Send Reminder from sales@" button — emails go out automatically without opening your mail client. Enter once; stored on this device only. Ask Tim for the token.</p>
-      <input type="password" class="inp-base" value="${e(reminderToken||localStorage.getItem('hpdc-rtoken')||'')}" placeholder="hdpc-core-…" style="width:100%;margin-bottom:8px" oninput="reminderToken=this.value;localStorage.setItem('hpdc-rtoken',this.value)">
+      <input type="text" class="inp-base" value="${e(reminderToken||localStorage.getItem('hpdc-rtoken')||'')}" placeholder="hdpc-core-…" style="width:100%;margin-bottom:8px;font-family:monospace" oninput="reminderToken=this.value;localStorage.setItem('hpdc-rtoken',this.value)">
       <div style="font-size:11px;color:${(reminderToken||localStorage.getItem('hpdc-rtoken'))?'var(--green)':'var(--text3)'}">${(reminderToken||localStorage.getItem('hpdc-rtoken'))?'✓ Token saved — Send Reminder from sales@ is active':'Not set — Remind buttons will open your email client instead'}</div>
     </div>
     <div class="ss"><div class="ss-title">Reminder email template</div>
