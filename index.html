@@ -823,30 +823,18 @@ async function checkTrackingNum(tn,btnEl){
   }
   render();
 }
-async function sendReminderFromGAS(ordId,btnEl){
+function sendReminderFromGAS(ordId,btnEl){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   const tok=reminderToken||localStorage.getItem('hpdc-rtoken')||'';
   if(!tok){alert('Reminder token not set — add it in Settings → Reminder Token.');return;}
-  if(btnEl){btnEl.disabled=true;btnEl.textContent='⏳ Sending…';}
-  try{
-    const r=await fetch(GAS_BASE+'?action=send_app&id='+encodeURIComponent(o.id)+'&token='+encodeURIComponent(tok));
-    const text=await r.text();
-    let d;
-    try{d=JSON.parse(text);}catch(e){d={ok:false,error:'Bad response: '+text.slice(0,200)};}
-    if(d.ok){
-      pushUndo();
-      if(!o.reminderLog)o.reminderLog=[];
-      const dt=new Date();
-      o.reminderLog.push((dt.getMonth()+1)+'/'+dt.getDate()+'/'+dt.getFullYear());
-      saveAll();render();
-    }else{
-      alert('Error: '+(d.error||d.message||'Unknown'));
-      if(btnEl){btnEl.disabled=false;btnEl.textContent='✉ Send Reminder';}
-    }
-  }catch(err){
-    alert('Fetch failed: '+err.message);
-    if(btnEl){btnEl.disabled=false;btnEl.textContent='✉ Send Reminder';}
-  }
+  // Open GAS in new tab (bypasses CORS entirely — same approach digest email links use)
+  window.open(GAS_BASE+'?action=send_app&id='+encodeURIComponent(o.id)+'&token='+encodeURIComponent(tok));
+  // Log reminder immediately in the app
+  pushUndo();
+  if(!o.reminderLog)o.reminderLog=[];
+  const dt=new Date();
+  o.reminderLog.push((dt.getMonth()+1)+'/'+dt.getDate()+'/'+dt.getFullYear());
+  saveAll();render();
 }
 function buildView(){
   if(view==='daily')return dailyV();if(view==='summary')return summaryV();
