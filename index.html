@@ -486,6 +486,32 @@ function saveAll(){
   if(syncConfig.enabled&&syncConfig.scriptUrl)scheduleSync();
 }
 function savePeriods(){try{localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}catch(e){}}
+function dedupOrders(){
+  const seen=new Map();
+  const deduped=[];
+  orders.forEach(o=>{
+    const k=String(o.orderNum).toLowerCase().trim();
+    if(!k)return;
+    if(!seen.has(k)){seen.set(k,deduped.length);deduped.push(o);}
+    else{
+      // Merge: keep higher _updated, combine reminderLogs, prefer returnedNums from whichever is more complete
+      const idx=seen.get(k);
+      const ex=deduped[idx];
+      const winner=(o._updated||0)>=(ex._updated||0)?o:ex;
+      const loser=(o._updated||0)>=(ex._updated||0)?ex:o;
+      const mergedRem=[...(new Set([...(winner.reminderLog||[]),...(loser.reminderLog||[])]))].sort();
+      const mergedRetNums=[...(new Set([...(winner.returnedNums||[]),...(loser.returnedNums||[])]))];
+      deduped[idx]={...winner,reminderLog:mergedRem,returnedNums:mergedRetNums,returnUsed:winner.returnUsed||loser.returnUsed};
+    }
+  });
+  const removed=orders.length-deduped.length;
+  if(removed===0){alert('No duplicates found.');return;}
+  pushUndo();
+  orders=deduped;
+  saveAll();
+  render();
+  alert('Fixed: removed '+removed+' duplicate order'+(removed>1?'s':'')+'. Pull from cloud to sync the cleanup up.');
+}
 function saveBurnRates(){
   try{
     localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));
@@ -1958,8 +1984,9 @@ function settV(){
         <button class="btn-g" onclick="exportCSV()">Export CSV</button>
         <button class="btn-g" onclick="importData()">Import JSON backup</button>
         <button class="btn-d" style="padding:8px 16px;border-radius:var(--r);font-size:12px;border:1px solid rgba(204,0,0,.4)" onclick="clearAllData()">Clear all entries</button>
+      <button class="btn-g" style="padding:8px 16px;font-size:12px" onclick="dedupOrders()">Fix duplicate order #s</button>
       </div>
-      <p style="font-size:11px;color:var(--text3);margin-top:6px">Clear all entries removes every order and expense. Undo immediately after if you clear by mistake.</p>
+      <p style="font-size:11px;color:var(--text3);margin-top:6px">Clear all entries removes every order and expense. Undo immediately after if you clear by mistake. "Fix duplicate order #s" merges entries with the same order number, keeping the most recent data.</p>
     </div>
     <div class="ss"><div class="ss-title">Core return policy</div>
       <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.6">Set your return window. Cores outstanding beyond this many days are flagged as overdue. 90+ days triggers the warranty void option.</p>
