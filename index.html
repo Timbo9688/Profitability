@@ -329,6 +329,7 @@ tbody td{padding:7px 8px;}
       <button onclick="sv('summary')">Summary</button>
       <button onclick="sv('production')">Production</button>
       <button onclick="sv('labels')" id="nav-labels">Core Returns</button>
+      <button onclick="sv('incoming')" id="nav-incoming">Incoming</button>
       <button onclick="sv('settings')">Settings</button>
     </nav>
   </div>
@@ -758,7 +759,7 @@ function sv(v){
   view=v;addingExpDate=null;
   if(v!=='history')searchQuery='';
   if(v!=='daily')lowMarginFilter=false;
-  document.querySelectorAll('.nav button').forEach((b,i)=>b.classList.toggle('active',['daily','summary','production','labels','settings'][i]===v));
+  document.querySelectorAll('.nav button').forEach((b,i)=>b.classList.toggle('active',['daily','summary','production','labels','incoming','settings'][i]===v));
   if(v==='entry'&&!editId){f=fresh();if(entryDatePreset){f.date=entryDatePreset;entryDatePreset=null;}}
 
   updateBadge();render();
@@ -810,7 +811,55 @@ function autoCheckIn(data){
   if(count>0)saveAll();
   return count;
 }
-function incomingV(){return labelsV();}
+function incomingV(){
+  const d=incomingData;
+  if(!d||(!(d.incoming||[]).length&&!(d.arrived||[]).length)){
+    return`<div style="max-width:880px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h2 style="margin:0;font-family:var(--fh);font-size:22px;font-weight:800;text-transform:uppercase">Incoming Cores</h2>
+        <button id="scan-btn-inc" onclick="scanAllReturns(this)" style="background:var(--red);border:none;color:#fff;padding:9px 20px;border-radius:var(--r);font-size:13px;font-weight:700;font-family:var(--fh);text-transform:uppercase;letter-spacing:.5px;cursor:pointer">🔄 Scan All Returns</button>
+      </div>
+      <div style="padding:40px;text-align:center;color:var(--text3)">
+        <div style="font-size:16px;margin-bottom:8px">No scan data yet</div>
+        <div style="font-size:13px">Hit Scan All Returns to check UPS status on all pending labels. Takes ~1-2 min.</div>
+      </div>
+    </div>`;
+  }
+  const inc=d.incoming||[],arr=d.arrived||[];
+  const today=inc.filter(r=>r.etaDays!=null&&r.etaDays<=0);
+  const week=inc.filter(r=>r.etaDays!=null&&r.etaDays>0&&r.etaDays<=7);
+  const later=inc.filter(r=>r.etaDays==null||r.etaDays>7);
+  let scanAge='';
+  if(d.computedAt){try{const m=Math.round((Date.now()-new Date(d.computedAt))/60000);scanAge=m<2?'just now':m<60?m+'m ago':Math.round(m/60)+'h ago';}catch(ex){scanAge=d.computedAt;}}
+  const row=r=>`<tr style="border-top:1px solid var(--border)">
+    <td style="padding:8px 10px"><b>#${e(r.order||'')}</b> <span style="color:var(--text2)">${e(r.name||'')}</span><div style="font-size:11px;color:var(--text3)">${e(r.desc||'')}</div></td>
+    <td style="padding:8px 10px;white-space:nowrap;color:var(--text2)">${r.eta||'—'}</td>
+    <td style="padding:8px 10px;color:var(--text2);font-size:12px">${e(r.status||'')}</td>
+    <td style="padding:8px 10px"><a href="https://www.ups.com/track?tracknum=${encodeURIComponent(r.tn||'')}" target="_blank" style="font-family:monospace;font-size:11px;color:var(--blue)">${r.tn?r.tn.slice(-10):''}</a></td>
+  </tr>`;
+  const sec=(title,list,color)=>list.length?`
+    <div style="font-size:10px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.7px;margin:16px 0 6px">${title} (${list.length})</div>
+    <table style="width:100%;border-collapse:collapse;font-size:13px;background:var(--bg2);border-radius:var(--r);overflow:hidden">
+      <thead><tr style="background:var(--bg3)"><th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Order</th><th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px">ETA</th><th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Status</th><th style="padding:6px 10px;text-align:left;font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Tracking</th></tr></thead>
+      <tbody>${list.map(row).join('')}</tbody>
+    </table>`:'';
+  return`<div style="max-width:880px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <h2 style="margin:0;font-family:var(--fh);font-size:22px;font-weight:800;text-transform:uppercase">Incoming Cores</h2>
+      <button id="scan-btn-inc" onclick="scanAllReturns(this)" style="background:var(--red);border:none;color:#fff;padding:9px 20px;border-radius:var(--r);font-size:13px;font-weight:700;font-family:var(--fh);text-transform:uppercase;letter-spacing:.5px;cursor:pointer">🔄 Scan All Returns</button>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Last scan: ${scanAge||d.computedAt||'?'}</div>
+    <div style="display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:10px 18px;text-align:center"><div style="font-size:22px;font-weight:800;font-family:var(--fh);color:#60a5fa">${inc.length}</div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">In Transit</div></div>
+      <div style="background:var(--bg2);border:1px solid rgba(34,197,94,.3);border-radius:var(--r);padding:10px 18px;text-align:center"><div style="font-size:22px;font-weight:800;font-family:var(--fh);color:var(--green)">${arr.length}</div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Delivered</div></div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:10px 18px;text-align:center"><div style="font-size:22px;font-weight:800;font-family:var(--fh);color:var(--text3)">${d.notShippedCount||0}</div><div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Not Shipped</div></div>
+    </div>
+    ${arr.length?sec('✅ Delivered — auto check-in on next scan',arr,'var(--green)'):''}
+    ${sec('Arriving today / overdue',today,'var(--amber)')}
+    ${sec('Arriving this week',week,'#60a5fa')}
+    ${sec('Later / no ETA',later,'var(--text3)')}
+  </div>`;
+}
 async function checkTrackingNum(tn,btnEl){
   trackingCache.set(tn,{loading:true});
   if(btnEl){btnEl.disabled=true;btnEl.textContent='⏳ Checking…';}
@@ -839,7 +888,7 @@ function sendReminderFromGAS(ordId,btnEl){
 function buildView(){
   if(view==='daily')return dailyV();if(view==='summary')return summaryV();
   if(view==='production')return productionV();
-  if(view==='entry')return entryV();if(view==='labels'||view==='incoming')return labelsV();
+  if(view==='entry')return entryV();if(view==='labels')return labelsV();if(view==='incoming')return incomingV();
   if(view==='history')return histV();if(view==='settings')return settV();
 }
 
