@@ -346,7 +346,8 @@ function unlock(){
     document.getElementById('lock-screen').style.display='none';
     document.getElementById('app').style.display='block';
     sessionStorage.setItem('hpdc-unlocked','1');
-    render();
+    document.getElementById('view').innerHTML='<div style="padding:60px;text-align:center;color:var(--text3);font-size:14px">Loading from cloud…</div>';
+    syncFromCloud().then(()=>{render();startAutoPoll();}).catch(()=>render());
   } else {
     document.getElementById('lock-err').textContent='Incorrect password';
     document.getElementById('lock-inp').value='';
@@ -424,21 +425,9 @@ function loadData(){
     const ro_=g('hpdc-reviewed');if(ro_)reviewedOrders=new Set(ro_);
     const crd_=localStorage.getItem('hpdc-crd');if(crd_)coreReturnDays=parseInt(crd_)||30;
     const et_=localStorage.getItem('hpdc-etpl');emailTemplate=et_!=null?et_:"Please drop the core off at any UPS location at your earliest convenience.\n\nThank you for your business!\nHeavy Duty Parts Company";
-    const o=g('hpdc-orders'),fp=g('hpdc-periods'),cx=g('hpdc-cx'),
+    const fp=g('hpdc-periods'),cx=g('hpdc-cx'),
           dv=g('hpdc-dov'),de=g('hpdc-dexp'),fc=g('hpdc-fields'),sc=g('hpdc-sync'),at=g('hpdc-at');
-    if(o){orders=o;orders.forEach(ord=>{
-    if(typeof ord.trackingNumber==='string'&&!ord.trackingNumbers){ord.trackingNumbers=ord.trackingNumber?[ord.trackingNumber]:[];delete ord.trackingNumber;}
-    if(!ord.trackingNumbers)ord.trackingNumbers=[];
-    if(!ord.returnedNums)ord.returnedNums=[];
-    if(ord.warrantyVoided===undefined)ord.warrantyVoided=false;
-    if(ord.coreValue===undefined)ord.coreValue='';
-    if(!ord.reminderLog)ord.reminderLog=[];
-    if(!ord.customerName)ord.customerName='';
-    if(!ord.technician)ord.technician='';
-    if(!ord.quantity)ord.quantity='1';
-    // migrate: if returnUsed=true and has tracking numbers, mark all as returned
-    if(ord.returnUsed&&ord.trackingNumbers.length>0&&ord.returnedNums.length===0)ord.returnedNums=[...ord.trackingNumbers];
-  });}
+    // Orders live in the cloud only — never in localStorage
     if(fp) fcPeriods=fp.map(migratePeriod);
     if(cx) customExpenses=cx;
     if(dv) dailyOverrides=dv;
@@ -482,7 +471,7 @@ function mergeFields(saved){
   return m;
 }
 function saveAll(){
-  try{localStorage.setItem('hpdc-orders',JSON.stringify(orders));localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));localStorage.setItem('hpdc-reviewed',JSON.stringify([...reviewedOrders]));stamp();}catch(e){}
+  try{localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));localStorage.setItem('hpdc-reviewed',JSON.stringify([...reviewedOrders]));stamp();}catch(e){}
   if(syncConfig.enabled&&syncConfig.scriptUrl)scheduleSync();
 }
 function savePeriods(){try{localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}catch(e){}}
@@ -560,36 +549,9 @@ async function syncFromCloud(){
     if(!r.ok)throw new Error(r.status);
     const rec=await r.json();
     if(rec._ts&&rec.orders){
-      // Orders + costs
-      if(rec.orders){
-        // Smart merge: cloud wins for newer _updated, local wins for deletions
-        const localIds=new Set(orders.map(o=>o.id));
-        const cloudMap={};rec.orders.forEach(o=>cloudMap[o.id]=o);
-        const localMap={};orders.forEach(o=>localMap[o.id]=o);
-        const allCloudIds=Object.keys(cloudMap);
-        const merged=[];
-        // Keep all local orders (includes deletions — if not in local, it was deleted)
-        orders.forEach(o=>{
-          const cloud=cloudMap[o.id];
-          if(!cloud){merged.push(o);return;}
-          // Both exist — keep newer
-          const lt=o._updated||0,ct=cloud._updated||0;
-          merged.push(lt>=ct?o:cloud);
-        });
-        // Add cloud-only orders that aren't in local deleted set
-        // Only add if _updated is recent (last 5 mins) — new order from another device
-        const now=Date.now();
-        allCloudIds.forEach(id=>{
-          if(!localMap[id]){
-            const co=cloudMap[id];
-            // Only restore if recently updated (from another device) — not a local deletion
-            if((co._updated||0)>now-300000){merged.push(co);}
-          }
-        });
-        merged.sort((a,b)=>pd(b.date)-pd(a.date));
-        orders=merged;
-        localStorage.setItem('hpdc-orders',JSON.stringify(orders));
-      }
+      // Cloud is the only source of truth — take it directly, no merge
+      orders=rec.orders;
+      // Never write orders to localStorage
       if(rec.fcPeriods){fcPeriods=rec.fcPeriods.map(migratePeriod);localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}
       if(rec.customExpenses){customExpenses=rec.customExpenses;localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));}
       if(rec.dailyOverrides){dailyOverrides=rec.dailyOverrides;localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));}
@@ -2165,10 +2127,20 @@ function uploadBg(){
   };inp.click();
 }
 function removeBg(){localStorage.removeItem('hpdc-bg');applyBg();if(view==='settings')render();}
+localStorage.removeItem('hpdc-orders'); // orders live in cloud only
 loadData();
 applyBg();
-if(syncConfig.enabled&&syncConfig.scriptUrl){syncFromCloud().then(()=>{render();startAutoPoll();});}
-else{render();}
+// Always fetch from cloud on load — orders live there, not in localStorage
+if(syncConfig.enabled&&syncConfig.scriptUrl){
+  if(!sessionStorage.getItem('hpdc-unlocked')){
+    // Will fetch after unlock
+  } else {
+    document.getElementById('view').innerHTML='<div style="padding:60px;text-align:center;color:var(--text3);font-size:14px">Loading from cloud…</div>';
+    syncFromCloud().then(()=>{render();startAutoPoll();}).catch(()=>render());
+  }
+} else {
+  render();
+}
 
 // ── DOOM ─────────────────────────────────────────────────────────────────────
 function openDoom(){
