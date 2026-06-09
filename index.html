@@ -928,22 +928,14 @@ async function sendReviewEmail(ordId,btn){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   if(!o.customerEmail){alert('No email for this order.');return;}
   if(!googleReviewLink){alert('Set your Google Review link in Settings first.');sv('settings');return;}
-  if(!syncConfig.scriptUrl){alert('Cloud sync URL not set in Settings.');return;}
   if(btn){btn.disabled=true;btn.textContent='⏳';}
-  const isLocal=location.hostname==='localhost'||location.hostname==='127.0.0.1';
-  if(isLocal){
-    const params=new URLSearchParams({email:o.customerEmail,name:o.customerName||'',link:googleReviewLink});
-    const r=await fetch('/send-review?'+params);
-    if(!r.ok){const t=await r.text();console.error('send-review error:',t);}
-  }else{
-    const url=syncConfig.scriptUrl+'?action=send_review'+
-      '&email='+encodeURIComponent(o.customerEmail)+
-      '&name='+encodeURIComponent(o.customerName||'')+
-      '&link='+encodeURIComponent(googleReviewLink);
-    const w=window.open(url,'_blank','width=1,height=1,top=-100,left=-100');
-    await new Promise(r=>setTimeout(r,3000));
-    try{if(w&&!w.closed)w.close();}catch(e){}
-  }
+  const reviewUrl=GAS_BASE+'?action=send_review'+
+    '&email='+encodeURIComponent(o.customerEmail)+
+    '&name='+encodeURIComponent(o.customerName||'')+
+    '&link='+encodeURIComponent(googleReviewLink);
+  const w=window.open(reviewUrl,'_blank','width=1,height=1,top=-100,left=-100');
+  await new Promise(r=>setTimeout(r,3000));
+  try{if(w&&!w.closed)w.close();}catch(e){}
   const d=new Date();
   googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
