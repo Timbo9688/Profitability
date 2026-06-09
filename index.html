@@ -330,6 +330,7 @@ tbody td{padding:7px 8px;}
       <button onclick="sv('production')">Production</button>
       <button onclick="sv('labels')" id="nav-labels">Core Returns</button>
       <button onclick="sv('incoming')" id="nav-incoming">Incoming</button>
+      <button onclick="sv('reviews')" id="nav-reviews">Reviews</button>
       <button onclick="sv('settings')">Settings</button>
     </nav>
   </div>
@@ -424,6 +425,8 @@ function loadData(){
   try{
     const g=k=>{const v=localStorage.getItem(k);return v?JSON.parse(v):null;};
     const ro_=g('hpdc-reviewed');if(ro_)reviewedOrders=new Set(ro_);
+    const grs_=g('hpdc-review-state');if(grs_)googleReviewState=grs_;
+    googleReviewLink=localStorage.getItem('hpdc-review-link')||'';
     const crd_=localStorage.getItem('hpdc-crd');if(crd_)coreReturnDays=parseInt(crd_)||30;
     const et_=localStorage.getItem('hpdc-etpl');emailTemplate=et_!=null?et_:"Please drop the core off at any UPS location at your earliest convenience.\n\nThank you for your business!\nHeavy Duty Parts Company";
     const fp=g('hpdc-periods'),cx=g('hpdc-cx'),
@@ -890,6 +893,7 @@ function buildView(){
   if(view==='production')return productionV();
   if(view==='entry')return entryV();if(view==='labels')return labelsV();if(view==='incoming')return incomingV();
   if(view==='history')return histV();if(view==='settings')return settV();
+  if(view==='reviews')return reviewsV();
 }
 
 function getReminderTemplate(o,num){
@@ -918,6 +922,125 @@ function buildEmailLines(o){return getReminderTemplate(o,(o.reminderLog||[]).len
 function toggleEmail(){}
 function copyEmail(ordId){const o=orders.find(x=>x.id===ordId);if(!o)return;navigator.clipboard.writeText(getReminderTemplate(o,(o.reminderLog||[]).length+1)).catch(()=>{});}
 function emailCoreReminder(ordId){sendReminderAndLog(ordId);}
+
+// ── GOOGLE REVIEWS ────────────────────────────────────────────────────────────
+async function sendReviewEmail(ordId,btn){
+  const o=orders.find(x=>x.id===ordId);if(!o)return;
+  if(!o.customerEmail){alert('No email for this order.');return;}
+  if(!googleReviewLink){alert('Set your Google Review link in Settings first.');sv('settings');return;}
+  const tok=reminderToken||localStorage.getItem('hpdc-rtoken')||'';
+  if(!tok){alert('Reminder token not set — add it in Settings.');return;}
+  if(!syncConfig.scriptUrl){alert('Cloud sync URL not set in Settings.');return;}
+  const origText=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.textContent='⏳ Sending…';}
+  try{
+    const url=syncConfig.scriptUrl+'?action=send_review'+
+      '&email='+encodeURIComponent(o.customerEmail)+
+      '&name='+encodeURIComponent(o.customerName||'')+
+      '&link='+encodeURIComponent(googleReviewLink)+
+      '&token='+encodeURIComponent(tok);
+    const r=await fetch(url);
+    const txt=await r.text();
+    if(txt.trim()==='ok'){
+      const d=new Date();
+      googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
+      localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+      render();
+    }else{
+      alert('Send failed: '+txt);
+      if(btn){btn.disabled=false;btn.textContent=origText;}
+    }
+  }catch(err){
+    alert('Network error: '+err.message);
+    if(btn){btn.disabled=false;btn.textContent=origText;}
+  }
+}
+function skipReview(orderNum){
+  googleReviewState[orderNum]=googleReviewState[orderNum]||{};
+  googleReviewState[orderNum].skipped=true;
+  localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+  render();
+}
+function unskipReview(orderNum){
+  if(googleReviewState[orderNum]){
+    delete googleReviewState[orderNum].skipped;
+    if(!googleReviewState[orderNum].sent)delete googleReviewState[orderNum];
+  }
+  localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+  render();
+}
+function reviewsV(){
+  const READY_DAYS=7,LOOKBACK=30;
+  const now=new Date();
+  const cutoff=new Date(now);cutoff.setDate(cutoff.getDate()-LOOKBACK);
+  const recent=orders.filter(o=>{const d=pd(o.date);return d&&d.getFullYear()>2000&&d>=cutoff;})
+    .sort((a,b)=>pd(b.date)-pd(a.date));
+  let nReady=0,nSent=0,nWaiting=0;
+  const rows=recent.map(o=>{
+    const rs=googleReviewState[o.orderNum]||{};
+    const d=pd(o.date);
+    const daysSince=Math.floor((now-d)/86400000);
+    const hasEmail=!!o.customerEmail;
+    let badge,actions;
+    if(rs.sent){
+      nSent++;
+      badge=`<span style="background:#16a34a22;color:var(--green);padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">✓ Sent ${rs.sentDate||''}</span>`;
+      actions='';
+    }else if(rs.skipped){
+      badge=`<span style="color:var(--text3);font-size:12px">Skipped</span>`;
+      actions=`<button onclick="unskipReview('${o.orderNum}')" style="background:none;border:1px solid var(--border2);color:var(--text3);padding:4px 10px;border-radius:var(--r);font-size:11px;cursor:pointer">Undo</button>`;
+    }else if(daysSince>=READY_DAYS){
+      if(!hasEmail){
+        badge=`<span style="color:var(--amber);font-size:12px">No email</span>`;
+        actions='';
+      }else{
+        nReady++;
+        badge=`<span style="background:var(--red);color:#fff;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700">READY</span>`;
+        actions=`<button data-id="${o.id}" onclick="sendReviewEmail(this.dataset.id,this)" style="background:var(--red);border:none;color:#fff;padding:6px 14px;border-radius:var(--r);font-size:12px;font-weight:700;font-family:var(--fh);cursor:pointer;margin-right:6px">⭐ Send Request</button><button onclick="skipReview('${o.orderNum}')" style="background:none;border:1px solid var(--border2);color:var(--text3);padding:6px 10px;border-radius:var(--r);font-size:11px;cursor:pointer">Skip</button>`;
+      }
+    }else{
+      nWaiting++;
+      badge=`<span style="color:var(--text3);font-size:12px">${READY_DAYS-daysSince}d left</span>`;
+      actions=`<button onclick="skipReview('${o.orderNum}')" style="background:none;border:1px solid var(--border2);color:var(--text3);padding:4px 10px;border-radius:var(--r);font-size:11px;cursor:pointer">Skip</button>`;
+    }
+    return`<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:10px 12px;color:var(--text2);font-size:13px;white-space:nowrap">${o.date}</td>
+      <td style="padding:10px 12px;color:var(--text);font-size:13px;font-weight:600">#${e(o.orderNum)}</td>
+      <td style="padding:10px 12px;color:var(--text);font-size:13px">${e(o.customerName||'')}</td>
+      <td style="padding:10px 12px;color:var(--text2);font-size:12px">${e(o.customerEmail||'—')}</td>
+      <td style="padding:10px 12px;color:var(--text2);font-size:13px;text-align:center">${daysSince}d</td>
+      <td style="padding:10px 12px">${badge}</td>
+      <td style="padding:10px 12px">${actions}</td>
+    </tr>`;
+  }).join('');
+  const noLink=!googleReviewLink;
+  return`<div style="padding:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
+      <h2 style="margin:0;font-size:18px;font-family:var(--fh);color:var(--text)">⭐ Google Reviews</h2>
+      <div style="display:flex;gap:20px">
+        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:var(--red)">${nReady}</div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Ready</div></div>
+        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:var(--green)">${nSent}</div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Sent</div></div>
+        <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:var(--text3)">${nWaiting}</div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Waiting</div></div>
+      </div>
+    </div>
+    ${noLink?`<div class="alert alert-warn" style="margin-bottom:16px">⚠ Google Review link not set — <button class="btn-s" onclick="sv('settings')">Add in Settings →</button></div>`:''}
+    ${recent.length===0?`<div class="empty"><h3>No orders in the last 30 days</h3></div>`:
+    `<div style="font-size:12px;color:var(--text3);margin-bottom:12px">Last ${LOOKBACK} days &nbsp;·&nbsp; Flagged ${READY_DAYS} days after order</div>
+    <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse">
+      <thead><tr style="border-bottom:2px solid var(--border2)">
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Date</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Order</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Customer</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Email</th>
+        <th style="padding:8px 12px;text-align:center;font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Age</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Status</th>
+        <th style="padding:8px 12px;text-align:left;font-size:11px;color:var(--text3);text-transform:uppercase;font-weight:600">Action</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`}
+  </div>`;
+}
+
 // ── DAILY LEDGER ──────────────────────────────────────────────────────────────
 function dailyV(){
   const dated=byDate();
@@ -1810,6 +1933,8 @@ let ledgerDateFrom='';
 let ledgerDateTo='';
 let lowMarginFilter=false;
 let reviewedOrders=new Set();
+let googleReviewState={};  // { [orderNum]: { sent, sentDate, skipped } }
+let googleReviewLink='';
 function histV(){
   const q=searchQuery.trim().toLowerCase();
   const filtered=q
@@ -2005,6 +2130,11 @@ function settV(){
       <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.6">Enables the "Send Reminder from sales@" button — emails go out automatically without opening your mail client. Enter once; stored on this device only. Ask Tim for the token.</p>
       <input type="text" class="inp-base" value="${e(reminderToken||localStorage.getItem('hpdc-rtoken')||'')}" placeholder="hdpc-core-…" style="width:100%;margin-bottom:8px;font-family:monospace" oninput="reminderToken=this.value;localStorage.setItem('hpdc-rtoken',this.value)">
       <div style="font-size:11px;color:${(reminderToken||localStorage.getItem('hpdc-rtoken'))?'var(--green)':'var(--text3)'}">${(reminderToken||localStorage.getItem('hpdc-rtoken'))?'✓ Token saved — Send Reminder from sales@ is active':'Not set — Remind buttons will open your email client instead'}</div>
+    </div>
+    <div class="ss"><div class="ss-title">Google Review Link</div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.6">Your Google review request link. Find it in your Google Business Profile → "Get more reviews". Customers are emailed this link 7 days after their order from the Reviews tab.</p>
+      <input type="text" class="inp-base" value="${e(googleReviewLink)}" placeholder="https://g.page/r/…" style="width:100%;margin-bottom:8px" oninput="googleReviewLink=this.value.trim();localStorage.setItem('hpdc-review-link',this.value.trim())">
+      <div style="font-size:11px;color:${googleReviewLink?'var(--green)':'var(--text3)'}">${googleReviewLink?'✓ Review link saved':'Not set — paste your Google Business review link above'}</div>
     </div>
     <div class="ss"><div class="ss-title">Reminder email template</div>
       <p style="font-size:13px;color:var(--text2);margin-bottom:10px;line-height:1.6">This is the closing portion of the core return reminder email. The order details (order #, description, fulfillment date, tracking numbers) are always added automatically above this text.</p>
