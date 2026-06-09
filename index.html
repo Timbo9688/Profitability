@@ -924,33 +924,20 @@ function copyEmail(ordId){const o=orders.find(x=>x.id===ordId);if(!o)return;navi
 function emailCoreReminder(ordId){sendReminderAndLog(ordId);}
 
 // ── GOOGLE REVIEWS ────────────────────────────────────────────────────────────
-async function sendReviewEmail(ordId,btn){
+function sendReviewEmail(ordId,btn){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   if(!o.customerEmail){alert('No email for this order.');return;}
   if(!googleReviewLink){alert('Set your Google Review link in Settings first.');sv('settings');return;}
   if(!syncConfig.scriptUrl){alert('Cloud sync URL not set in Settings.');return;}
-  const origText=btn?btn.textContent:'';
-  if(btn){btn.disabled=true;btn.textContent='⏳ Sending…';}
-  try{
-    const url=syncConfig.scriptUrl+'?action=send_review'+
-      '&email='+encodeURIComponent(o.customerEmail)+
-      '&name='+encodeURIComponent(o.customerName||'')+
-      '&link='+encodeURIComponent(googleReviewLink);
-    const r=await fetch(url);
-    const txt=await r.text();
-    if(txt.trim()==='ok'){
-      const d=new Date();
-      googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
-      localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
-      render();
-    }else{
-      alert('Send failed: '+txt);
-      if(btn){btn.disabled=false;btn.textContent=origText;}
-    }
-  }catch(err){
-    alert('Network error: '+err.message);
-    if(btn){btn.disabled=false;btn.textContent=origText;}
-  }
+  const url=syncConfig.scriptUrl+'?action=send_review'+
+    '&email='+encodeURIComponent(o.customerEmail)+
+    '&name='+encodeURIComponent(o.customerName||'')+
+    '&link='+encodeURIComponent(googleReviewLink);
+  window.open(url);
+  const d=new Date();
+  googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
+  localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+  render();
 }
 function skipReview(orderNum){
   googleReviewState[orderNum]=googleReviewState[orderNum]||{};
