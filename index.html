@@ -934,7 +934,9 @@ async function sendReviewEmail(ordId,btn){
     '&email='+encodeURIComponent(o.customerEmail)+
     '&name='+encodeURIComponent(o.customerName||'')+
     '&link='+encodeURIComponent(googleReviewLink);
-  try{await fetch(url,{mode:'no-cors'});}catch(e){}
+  const w=window.open(url,'_blank','width=1,height=1,top=-100,left=-100');
+  await new Promise(r=>setTimeout(r,3000));
+  try{if(w&&!w.closed)w.close();}catch(e){}
   const d=new Date();
   googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
