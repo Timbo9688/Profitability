@@ -771,6 +771,7 @@ function updateBadge(){const p=orders.reduce((s,o)=>s+pendingLabelCount(o),0),bt
 function render(){document.getElementById('view').innerHTML=buildView();updateBadge();updateSummary();updateUndoBtn();}
 let incomingData=(function(){try{return JSON.parse(localStorage.getItem('hpdc-incoming')||'null');}catch(e){return null;}})();
 const GAS_BASE='https://script.google.com/macros/s/AKfycbxAJxuJW_DZ1epfWpTOhRiKLCix-0M9ldJ1zQBxfymGNevBngOLCa3ge1EsEAMW8JVJyg/exec';
+const REVIEW_URL='https://script.google.com/a/macros/heavydutypartscompany.com/s/AKfycbwg_cDx3kh-xVG_j7PnurdxeWa-R0CobNBSTDOqoxEx22w9EdzvVCFSxkI7oEMrFdfvUA/exec';
 const VIEW_TOKEN='hdpc-view-3Rk8pZqW9t';
 const SCAN_URL=GAS_BASE+'?action=scan&token='+VIEW_TOKEN;
 let trackingCache=new Map(); // tn → {ok,type,desc,eta,loading,error}
@@ -929,7 +930,7 @@ async function sendReviewEmail(ordId,btn){
   if(!o.customerEmail){alert('No email for this order.');return;}
   if(!googleReviewLink){alert('Set your Google Review link in Settings first.');sv('settings');return;}
   if(btn){btn.disabled=true;btn.textContent='⏳';}
-  const reviewUrl=GAS_BASE+'?action=send_review'+
+  const reviewUrl=REVIEW_URL+'?action=send_review'+
     '&email='+encodeURIComponent(o.customerEmail)+
     '&name='+encodeURIComponent(o.customerName||'')+
     '&link='+encodeURIComponent(googleReviewLink);
