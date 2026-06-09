@@ -924,20 +924,39 @@ function copyEmail(ordId){const o=orders.find(x=>x.id===ordId);if(!o)return;navi
 function emailCoreReminder(ordId){sendReminderAndLog(ordId);}
 
 // ── GOOGLE REVIEWS ────────────────────────────────────────────────────────────
-function sendReviewEmail(ordId,btn){
+async function sendReviewEmail(ordId,btn){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   if(!o.customerEmail){alert('No email for this order.');return;}
   if(!googleReviewLink){alert('Set your Google Review link in Settings first.');sv('settings');return;}
   if(!syncConfig.scriptUrl){alert('Cloud sync URL not set in Settings.');return;}
+  if(btn){btn.disabled=true;btn.textContent='⏳';}
   const url=syncConfig.scriptUrl+'?action=send_review'+
     '&email='+encodeURIComponent(o.customerEmail)+
     '&name='+encodeURIComponent(o.customerName||'')+
     '&link='+encodeURIComponent(googleReviewLink);
-  window.open(url);
+  try{await fetch(url,{mode:'no-cors'});}catch(e){}
   const d=new Date();
   googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
   render();
+}
+async function sendAllReady(){
+  const READY_DAYS=7,LOOKBACK=30;
+  const now=new Date();
+  const cutoff=new Date(now);cutoff.setDate(cutoff.getDate()-LOOKBACK);
+  const ready=orders.filter(o=>{
+    const rs=googleReviewState[o.orderNum]||{};
+    if(rs.sent||rs.skipped)return false;
+    const d=pd(o.date);
+    if(!d||d.getFullYear()<=2000)return false;
+    return Math.floor((now-d)/86400000)>=READY_DAYS&&d>=cutoff&&o.customerEmail;
+  });
+  if(!ready.length)return;
+  if(!confirm('Send review requests to '+ready.length+' customer'+(ready.length>1?'s':'')+' now?'))return;
+  for(const o of ready){
+    await sendReviewEmail(o.id,null);
+    await new Promise(r=>setTimeout(r,600));
+  }
 }
 function skipReview(orderNum){
   googleReviewState[orderNum]=googleReviewState[orderNum]||{};
@@ -1000,7 +1019,10 @@ function reviewsV(){
   const noLink=!googleReviewLink;
   return`<div style="padding:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px">
-      <h2 style="margin:0;font-size:18px;font-family:var(--fh);color:var(--text)">⭐ Google Reviews</h2>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0;font-size:18px;font-family:var(--fh);color:var(--text)">⭐ Google Reviews</h2>
+        ${nReady>0?`<button onclick="sendAllReady()" style="background:var(--red);border:none;color:#fff;padding:7px 16px;border-radius:var(--r);font-size:12px;font-weight:700;font-family:var(--fh);text-transform:uppercase;letter-spacing:.5px;cursor:pointer">Send All Ready (${nReady})</button>`:''}
+      </div>
       <div style="display:flex;gap:20px">
         <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:var(--red)">${nReady}</div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Ready</div></div>
         <div style="text-align:center"><div style="font-size:24px;font-weight:700;color:var(--green)">${nSent}</div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px">Sent</div></div>
