@@ -930,7 +930,7 @@ async function sendReviewEmail(ordId,btn){
   if(!o.customerEmail){alert('No email for this order.');return;}
   if(!googleReviewLink){alert('Set your Google Review link in Settings first.');sv('settings');return;}
   if(btn){btn.disabled=true;btn.textContent='⏳';}
-  const reviewUrl=REVIEW_URL+'?action=send_review'+
+  const reviewUrl=syncConfig.scriptUrl+'?action=queue_review'+
     '&email='+encodeURIComponent(o.customerEmail)+
     '&name='+encodeURIComponent(o.customerName||'')+
     '&link='+encodeURIComponent(googleReviewLink);
