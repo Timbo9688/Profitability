@@ -686,7 +686,7 @@ function totals(){
   // Walk every calendar day for accurate fixed cost total
   let fixed=customExpenses.filter(x=>x.freq==='onetime').reduce((s,x)=>s+n(x.amount),0);
   if(dated.length){
-    const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
+    const allOrderDates=orders.map(o=>pd(o.date)).filter(d=>d&&d.getFullYear()>2000);
     const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
     bizStart.setHours(0,0,0,0);
     const lastEntryDate=pd(dated[dated.length-1][0]);
@@ -982,7 +982,7 @@ function dailyV(){
   if(allDated.length){
     const ordMap={};
     allDated.forEach(([date,dayOrders])=>{ordMap[normDateStr(date)]=dayOrders;});
-    const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
+    const allOrderDates=orders.map(o=>pd(o.date)).filter(d=>d&&d.getFullYear()>2000);
     const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
     bizStart.setHours(0,0,0,0);
     const lastEntryDate=pd(allDated[allDated.length-1][0]);
@@ -2253,7 +2253,7 @@ function dailyV(){
   if(allDated.length){
     const ordMap={};
     allDated.forEach(([date,dayOrders])=>{ordMap[normDateStr(date)]=dayOrders;});
-    const allOrderDates=orders.map(o=>pd(o.date)).filter(Boolean);
+    const allOrderDates=orders.map(o=>pd(o.date)).filter(d=>d&&d.getFullYear()>2000);
     const bizStart=new Date(Math.min(...allOrderDates.map(d=>d.getTime())));
     bizStart.setHours(0,0,0,0);
     const lastEntryDate=pd(allDated[allDated.length-1][0]);
