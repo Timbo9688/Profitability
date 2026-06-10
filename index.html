@@ -576,7 +576,18 @@ async function syncFromCloud(){
       // Sheet-based settings (App Settings tab) — these win over localStorage
       if(rec.settings){
         const s=rec.settings;
-        if(s.background_url){localStorage.setItem('hpdc-bg-url',s.background_url);applyBg();}
+        // Background: fetch base64 via ?action=bg when timestamp changes (avoids broken Drive URL in CSS)
+        if(s.background_ts){
+          const cachedTs=localStorage.getItem('hpdc-bg-ts');
+          if(String(s.background_ts)!==cachedTs&&syncConfig.scriptUrl){
+            localStorage.removeItem('hpdc-bg-url');
+            fetch(syncConfig.scriptUrl+'?action=bg')
+              .then(r=>r.json())
+              .then(bg=>{if(bg.data){localStorage.setItem('hpdc-bg',bg.data);localStorage.setItem('hpdc-bg-ts',String(bg.ts||s.background_ts));applyBg();}})
+              .catch(()=>{});
+          }
+        }
+        if(s.background_url&&!s.background_ts){localStorage.setItem('hpdc-bg-url',s.background_url);applyBg();}
         if(s.burn_rate){const monthly=parseFloat(String(s.burn_rate).replace(/[$,]/g,''));if(!isNaN(monthly)&&monthly>0){burnRates=[{id:'sheet',effectiveDate:'1/1/2020',dailyTotal:monthly/30,note:'From sheet settings'}];localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));}}
         if(s.alert_threshold!=null){alertThreshold=parseFloat(s.alert_threshold)||alertThreshold;localStorage.setItem('hpdc-at',alertThreshold);}
         if(s.core_return_days!=null){coreReturnDays=parseInt(s.core_return_days)||coreReturnDays;localStorage.setItem('hpdc-crd',coreReturnDays);}
