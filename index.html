@@ -573,6 +573,16 @@ async function syncFromCloud(){
       if(rec.versions){localStorage.setItem('hpdc-versions',JSON.stringify(rec.versions));}
       if(rec.bg!=null){if(rec.bg){localStorage.setItem('hpdc-bg',rec.bg);}else{localStorage.removeItem('hpdc-bg');}applyBg();}
       if(rec._incoming){incomingData=rec._incoming;try{localStorage.setItem('hpdc-incoming',JSON.stringify(rec._incoming));}catch(e){}}
+      // Sheet-based settings (App Settings tab) — these win over localStorage
+      if(rec.settings){
+        const s=rec.settings;
+        if(s.background_url){localStorage.setItem('hpdc-bg-url',s.background_url);applyBg();}
+        if(s.burn_rate){const monthly=parseFloat(String(s.burn_rate).replace(/[$,]/g,''));if(!isNaN(monthly)&&monthly>0){burnRates=[{id:'sheet',effectiveDate:'1/1/2020',dailyTotal:monthly/30,note:'From sheet settings'}];localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));}}
+        if(s.alert_threshold!=null){alertThreshold=parseFloat(s.alert_threshold)||alertThreshold;localStorage.setItem('hpdc-at',alertThreshold);}
+        if(s.core_return_days!=null){coreReturnDays=parseInt(s.core_return_days)||coreReturnDays;localStorage.setItem('hpdc-crd',coreReturnDays);}
+        if(s.google_review_link){googleReviewLink=s.google_review_link;localStorage.setItem('hpdc-review-link',s.google_review_link);}
+        if(s.email_template){emailTemplate=s.email_template;localStorage.setItem('hpdc-etpl',s.email_template);}
+      }
       // Update local timestamp to cloud timestamp so we don't re-pull unnecessarily
       localStorage.setItem('hpdc-local-ts',rec._ts);
     }
@@ -2284,7 +2294,8 @@ function delOrd(id){pushUndo();orders=orders.filter(o=>o.id!==id);try{localStora
 
 // ── BOOT ──────────────────────────────────────────────────────────────────────
 function applyBg(){
-  const bg=localStorage.getItem('hpdc-bg');
+  const bgUrl=localStorage.getItem('hpdc-bg-url');
+  const bg=bgUrl||localStorage.getItem('hpdc-bg');
   if(bg){
     document.body.style.backgroundImage=`url(${bg})`;
     document.body.style.backgroundSize='cover';
