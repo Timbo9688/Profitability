@@ -2353,10 +2353,23 @@ if(syncConfig.enabled&&syncConfig.scriptUrl){
   } else {
     document.getElementById('view').innerHTML='<div style="padding:60px;text-align:center;color:var(--text3);font-size:14px">Loading from cloud…</div>';
     syncFromCloud().then(()=>{
-      // Push local review state to cloud once per session (catches reviews sent before cloud sync existed)
+      // Push local review state to cloud once per session
       if(Object.keys(googleReviewState).length>0&&!sessionStorage.getItem('rs-pushed')){
         sessionStorage.setItem('rs-pushed','1');
         pushReviewState_();
+      }
+      // Check for background directly from GAS once per session — independent of tracker JSON
+      if(!sessionStorage.getItem('bg-checked')){
+        sessionStorage.setItem('bg-checked','1');
+        fetch(syncConfig.scriptUrl+'?action=bg')
+          .then(r=>r.json())
+          .then(bg=>{
+            if(bg.data&&bg.ts&&String(bg.ts)!==localStorage.getItem('hpdc-bg-ts')){
+              localStorage.setItem('hpdc-bg',bg.data);
+              localStorage.setItem('hpdc-bg-ts',String(bg.ts));
+              applyBg();
+            }
+          }).catch(()=>{});
       }
       render();startAutoPoll();
     }).catch(()=>render());
