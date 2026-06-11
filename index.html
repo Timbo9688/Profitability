@@ -569,6 +569,13 @@ async function syncFromCloud(){
       if(rec.coreReturnDays!=null){coreReturnDays=rec.coreReturnDays;localStorage.setItem('hpdc-crd',rec.coreReturnDays);}
       if(rec.emailTemplate!=null){emailTemplate=rec.emailTemplate;localStorage.setItem('hpdc-etpl',rec.emailTemplate);}
       if(rec.reviewedOrders){reviewedOrders=new Set(rec.reviewedOrders);localStorage.setItem('hpdc-reviewed',JSON.stringify(rec.reviewedOrders));}
+      if(rec.reviewState){
+        Object.keys(rec.reviewState).forEach(k=>{
+          if(!googleReviewState[k]){googleReviewState[k]=rec.reviewState[k];}
+          else{Object.assign(googleReviewState[k],rec.reviewState[k]);if(rec.reviewState[k].sent)googleReviewState[k].sent=true;}
+        });
+        localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+      }
       if(rec.appPassword){appPassword=rec.appPassword;localStorage.setItem('hpdc-pass',rec.appPassword);}
       if(rec.versions){localStorage.setItem('hpdc-versions',JSON.stringify(rec.versions));}
       if(rec.bg!=null){if(rec.bg){localStorage.setItem('hpdc-bg',rec.bg);}else{localStorage.removeItem('hpdc-bg');}applyBg();}
@@ -946,6 +953,10 @@ function copyEmail(ordId){const o=orders.find(x=>x.id===ordId);if(!o)return;navi
 function emailCoreReminder(ordId){sendReminderAndLog(ordId);}
 
 // ── GOOGLE REVIEWS ────────────────────────────────────────────────────────────
+function pushReviewState_(){
+  if(!syncConfig.scriptUrl)return;
+  fetch(syncConfig.scriptUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reviewState:googleReviewState})}).catch(()=>{});
+}
 async function sendReviewEmail(ordId,btn){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   if(!o.customerEmail){alert('No email for this order.');return;}
@@ -961,6 +972,7 @@ async function sendReviewEmail(ordId,btn){
   const d=new Date();
   googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+  pushReviewState_();
   render();
 }
 async function sendAllReady(){
@@ -985,6 +997,7 @@ function skipReview(orderNum){
   googleReviewState[orderNum]=googleReviewState[orderNum]||{};
   googleReviewState[orderNum].skipped=true;
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+  pushReviewState_();
   render();
 }
 function unskipReview(orderNum){
@@ -993,6 +1006,7 @@ function unskipReview(orderNum){
     if(!googleReviewState[orderNum].sent)delete googleReviewState[orderNum];
   }
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
+  pushReviewState_();
   render();
 }
 function reviewsV(){
