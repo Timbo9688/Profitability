@@ -555,6 +555,10 @@ async function syncFromCloud(){
     if(rec._ts&&rec.orders){
       // Cloud is the only source of truth — take it directly, no merge
       orders=rec.orders;
+      // Re-apply manual check-ins so they survive cloud overwrites; drop any the sheet already confirmed
+      applyCheckins();
+      Object.keys(coreCheckins).forEach(id=>{const o=orders.find(x=>x.id===id);if(!o||isOrderReturned(o)){delete coreCheckins[id];}});
+      localStorage.setItem('hpdc-checkins',JSON.stringify(coreCheckins));
       // Never write orders to localStorage
       if(rec.fcPeriods){fcPeriods=rec.fcPeriods.map(migratePeriod);localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}
       if(rec.customExpenses){customExpenses=rec.customExpenses;localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));}
@@ -786,6 +790,10 @@ const VIEW_TOKEN='hdpc-view-3Rk8pZqW9t';
 const SCAN_URL=GAS_BASE+'?action=scan&token='+VIEW_TOKEN;
 let trackingCache=new Map(); // tn → {ok,type,desc,eta,loading,error}
 let reminderToken=(function(){return localStorage.getItem('hpdc-rtoken')||'';})()
+let coreCheckins=(function(){try{return JSON.parse(localStorage.getItem('hpdc-checkins')||'{}');}catch(e){return {};}})();
+function saveCheckin(ordId,o){coreCheckins[ordId]={returnedNums:[...(o.returnedNums||[])],returnUsed:o.returnUsed};localStorage.setItem('hpdc-checkins',JSON.stringify(coreCheckins));}
+function removeCheckin(ordId){delete coreCheckins[ordId];localStorage.setItem('hpdc-checkins',JSON.stringify(coreCheckins));}
+function applyCheckins(){Object.entries(coreCheckins).forEach(([id,data])=>{const o=orders.find(x=>x.id===id);if(o){o.returnedNums=data.returnedNums;o.returnUsed=data.returnUsed;}});}
 function scanAllReturns(btn){
   if(btn){btn.disabled=true;btn.textContent='⏳ Scanning…';}
   fetch(SCAN_URL,{mode:'no-cors'}).catch(()=>{});
@@ -1919,8 +1927,8 @@ function lblSec(title,list,isUsed){
 
 
 function setLblCost(id,v){const o=orders.find(x=>x.id===id);if(o){o.returnCost=v;saveAll();}}
-function markUsed(id){const o=orders.find(x=>x.id===id);if(!o)return;pushUndo();const t=(o.trackingNumbers||[]).filter(x=>x.trim());if(t.length>0){o.returnedNums=[...t];}o.returnUsed=true;saveAll();render();}
-function unmark(id){const o=orders.find(x=>x.id===id);if(o){pushUndo();o.returnUsed=false;o.returnedNums=[];saveAll();render();}}
+function markUsed(id){const o=orders.find(x=>x.id===id);if(!o)return;pushUndo();const t=(o.trackingNumbers||[]).filter(x=>x.trim());if(t.length>0){o.returnedNums=[...t];}o.returnUsed=true;saveCheckin(id,o);saveAll();render();}
+function unmark(id){const o=orders.find(x=>x.id===id);if(o){pushUndo();o.returnUsed=false;o.returnedNums=[];removeCheckin(id);saveAll();render();}}
 // Per-tracking-number return helpers
 function isOrderReturned(o){
   if(!o.returnSent)return false;
@@ -1945,15 +1953,16 @@ function toggleTrackReturned(ordId,trackNum,checked){
   if(!o.returnedNums)o.returnedNums=[];
   if(checked){if(!o.returnedNums.includes(trackNum))o.returnedNums.push(trackNum);}
   else{o.returnedNums=o.returnedNums.filter(n=>n!==trackNum);}
-  // sync returnUsed for orders with no tracking numbers
   if((o.trackingNumbers||[]).filter(t=>t.trim()).length===0)o.returnUsed=checked;
   else o.returnUsed=isOrderReturned(o);
+  saveCheckin(ordId,o);
   saveAll();render();
 }
 function toggleCoreReturned(id,checked){
-  // fallback for orders with no tracking numbers
   const o=orders.find(x=>x.id===id);if(!o)return;
-  pushUndo();o.returnUsed=checked;saveAll();render();
+  pushUndo();o.returnUsed=checked;
+  if(checked)saveCheckin(id,o);else removeCheckin(id);
+  saveAll();render();
 }
 function markReviewed(id){
   if(reviewedOrders.has(id))reviewedOrders.delete(id);
