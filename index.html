@@ -1707,7 +1707,16 @@ function labelsV(){
   let scanAge=null;
   if(incomingData?.computedAt){try{const m=Math.round((Date.now()-new Date(incomingData.computedAt))/60000);scanAge=m<2?'just now':m<60?m+'m ago':Math.round(m/60)+'h ago';}catch(ex){scanAge=incomingData.computedAt;}}
 
-  const withLabels=orders.filter(o=>o.returnSent&&!o.warrantyVoided);
+  const cq=coreSearchQ.toLowerCase().trim();
+  function coreMatch(o){
+    if(!cq)return true;
+    return (o.orderNum||'').toLowerCase().includes(cq)
+      ||(o.customerName||'').toLowerCase().includes(cq)
+      ||(o.description||'').toLowerCase().includes(cq)
+      ||(o.customerEmail||'').toLowerCase().includes(cq)
+      ||(o.trackingNumbers||[]).some(t=>t.toLowerCase().includes(cq));
+  }
+  const withLabels=orders.filter(o=>o.returnSent&&!o.warrantyVoided&&coreMatch(o));
   const overdue=[],inTransit=[],inWindow=[],returned=[],arrived=[];
   withLabels.forEach(o=>{
     if(isOrderReturned(o)){returned.push(o);return;}
@@ -1716,7 +1725,7 @@ function labelsV(){
     if(tNums.length&&tNums.some(t=>inTransitTNs.has(t))){inTransit.push(o);return;}
     daysAged(o.date)>coreReturnDays?overdue.push(o):inWindow.push(o);
   });
-  const voided=orders.filter(o=>o.warrantyVoided);
+  const voided=orders.filter(o=>o.warrantyVoided&&coreMatch(o));
   overdue.sort((a,b)=>{
     const aLog=a.reminderLog||[],bLog=b.reminderLog||[];
     const aLast=aLog.length?aLog[aLog.length-1]:null;
@@ -1727,7 +1736,10 @@ function labelsV(){
     return daysAged(b.date)-daysAged(a.date);
   });
 
-  if(!withLabels.length&&!voided.length)return`<div class="empty"><h3>No cores tracked yet</h3><p>Add a return label to an order to start tracking.</p></div>`;
+  if(!withLabels.length&&!voided.length){
+    if(cq)return`<div class="empty"><h3>No results for "${e(cq)}"</h3><p><a href="javascript:void(0)" onclick="coreSearchQ='';render()" style="color:var(--red)">Clear search</a></p></div>`;
+    return`<div class="empty"><h3>No cores tracked yet</h3><p>Add a return label to an order to start tracking.</p></div>`;
+  }
 
   const coreValueAtRisk=overdue.reduce((s,o)=>s+n(o.coreValue),0);
 
@@ -1737,6 +1749,11 @@ function labelsV(){
       <div style="font-size:11px;color:var(--text3);margin-top:2px">${scanAge?'Last scan: '+scanAge+' · Delivered cores auto-checked in':'No scan data yet — hit Scan to check UPS'}</div>
     </div>
     <button id="scan-btn" onclick="scanAllReturns(this)" style="background:var(--red);border:none;color:#fff;padding:9px 20px;border-radius:var(--r);font-size:13px;font-weight:700;font-family:var(--fh);text-transform:uppercase;letter-spacing:.5px;cursor:pointer">🔄 Scan All Returns</button>
+  </div>`;
+
+  html+=`<div style="margin-bottom:14px;position:relative">
+    <input id="core-search" type="text" value="${e(coreSearchQ)}" placeholder="Search by name, order #, description, email, tracking…" oninput="coreSearchQ=this.value;render();requestAnimationFrame(()=>{const el=document.getElementById('core-search');if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length);}})" style="width:100%;box-sizing:border-box;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:9px 36px 9px 12px;font-size:13px;color:var(--text);font-family:var(--ff);outline:none">
+    ${cq?`<button onclick="coreSearchQ='';render()" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer;line-height:1;padding:2px 4px">×</button>`:''}
   </div>`;
 
   if(arrived.length){
@@ -1949,6 +1966,7 @@ let searchQuery='';
 let showEmailFor=new Set();
 let expandedOrds=new Set();
 let expandedCores=new Set();
+let coreSearchQ='';
 let expandedDays=new Set(); // dates (strings) that are expanded
 let emailTemplate='';
 let ledgerSearch='';
