@@ -1938,11 +1938,9 @@ function pendingLabelCount(o){
   return o.returnUsed?0:1;
 }
 function syncCheckinToCloud(o){
-  const tok=reminderToken||localStorage.getItem('hpdc-rtoken')||'';
-  if(!tok)return;
-  const rn=(o.returnedNums||[]).filter(t=>t.trim()).join(',');
-  const url=GAS_BASE+'?action=checkin&id='+encodeURIComponent(o.id)+'&token='+encodeURIComponent(tok)+'&returnUsed='+(o.returnUsed?'1':'0')+(rn?'&returnedNums='+encodeURIComponent(rn):'');
-  fetch(url,{mode:'no-cors'}).catch(function(){});
+  if(!syncConfig.enabled||!syncConfig.scriptUrl)return;
+  const updated=Object.assign({},o,{_updated:Date.now()});
+  fetch(syncConfig.scriptUrl,{method:'POST',mode:'no-cors',headers:{'Content-Type':'text/plain'},body:JSON.stringify({orders:[updated]})}).catch(function(){});
 }
 function toggleTrackReturned(ordId,trackNum,checked){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
