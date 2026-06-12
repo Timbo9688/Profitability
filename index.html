@@ -1917,8 +1917,8 @@ function lblSec(title,list,isUsed){
 
 
 function setLblCost(id,v){const o=orders.find(x=>x.id===id);if(o){o.returnCost=v;saveAll();}}
-function markUsed(id){const o=orders.find(x=>x.id===id);if(!o)return;pushUndo();const t=(o.trackingNumbers||[]).filter(x=>x.trim());if(t.length>0){o.returnedNums=[...t];}o.returnUsed=true;saveAll();render();}
-function unmark(id){const o=orders.find(x=>x.id===id);if(o){pushUndo();o.returnUsed=false;o.returnedNums=[];saveAll();render();}}
+function markUsed(id){const o=orders.find(x=>x.id===id);if(!o)return;pushUndo();const t=(o.trackingNumbers||[]).filter(x=>x.trim());if(t.length>0){o.returnedNums=[...t];}o.returnUsed=true;syncCheckinToCloud(o);saveAll();render();}
+function unmark(id){const o=orders.find(x=>x.id===id);if(o){pushUndo();o.returnUsed=false;o.returnedNums=[];syncCheckinToCloud(o);saveAll();render();}}
 // Per-tracking-number return helpers
 function isOrderReturned(o){
   if(!o.returnSent)return false;
@@ -1937,6 +1937,13 @@ function pendingLabelCount(o){
   }
   return o.returnUsed?0:1;
 }
+function syncCheckinToCloud(o){
+  const tok=reminderToken||localStorage.getItem('hpdc-rtoken')||'';
+  if(!tok)return;
+  const rn=(o.returnedNums||[]).filter(t=>t.trim()).join(',');
+  const url=GAS_BASE+'?action=checkin&id='+encodeURIComponent(o.id)+'&token='+encodeURIComponent(tok)+'&returnUsed='+(o.returnUsed?'1':'0')+(rn?'&returnedNums='+encodeURIComponent(rn):'');
+  fetch(url,{mode:'no-cors'}).catch(function(){});
+}
 function toggleTrackReturned(ordId,trackNum,checked){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   pushUndo();
@@ -1945,11 +1952,14 @@ function toggleTrackReturned(ordId,trackNum,checked){
   else{o.returnedNums=o.returnedNums.filter(n=>n!==trackNum);}
   if((o.trackingNumbers||[]).filter(t=>t.trim()).length===0)o.returnUsed=checked;
   else o.returnUsed=isOrderReturned(o);
+  syncCheckinToCloud(o);
   saveAll();render();
 }
 function toggleCoreReturned(id,checked){
   const o=orders.find(x=>x.id===id);if(!o)return;
-  pushUndo();o.returnUsed=checked;saveAll();render();
+  pushUndo();o.returnUsed=checked;
+  syncCheckinToCloud(o);
+  saveAll();render();
 }
 function markReviewed(id){
   if(reviewedOrders.has(id))reviewedOrders.delete(id);
