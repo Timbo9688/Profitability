@@ -569,13 +569,6 @@ async function syncFromCloud(){
       if(rec.coreReturnDays!=null){coreReturnDays=rec.coreReturnDays;localStorage.setItem('hpdc-crd',rec.coreReturnDays);}
       if(rec.emailTemplate!=null){emailTemplate=rec.emailTemplate;localStorage.setItem('hpdc-etpl',rec.emailTemplate);}
       if(rec.reviewedOrders){reviewedOrders=new Set(rec.reviewedOrders);localStorage.setItem('hpdc-reviewed',JSON.stringify(rec.reviewedOrders));}
-      if(rec.reviewState){
-        Object.keys(rec.reviewState).forEach(k=>{
-          if(!googleReviewState[k]){googleReviewState[k]=rec.reviewState[k];}
-          else{Object.assign(googleReviewState[k],rec.reviewState[k]);if(rec.reviewState[k].sent)googleReviewState[k].sent=true;}
-        });
-        localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
-      }
       if(rec.appPassword){appPassword=rec.appPassword;localStorage.setItem('hpdc-pass',rec.appPassword);}
       if(rec.versions){localStorage.setItem('hpdc-versions',JSON.stringify(rec.versions));}
       if(rec.bg!=null){if(rec.bg){localStorage.setItem('hpdc-bg',rec.bg);}else{localStorage.removeItem('hpdc-bg');}applyBg();}
@@ -583,18 +576,7 @@ async function syncFromCloud(){
       // Sheet-based settings (App Settings tab) — these win over localStorage
       if(rec.settings){
         const s=rec.settings;
-        // Background: fetch base64 via ?action=bg when timestamp changes (avoids broken Drive URL in CSS)
-        if(s.background_ts){
-          const cachedTs=localStorage.getItem('hpdc-bg-ts');
-          if(String(s.background_ts)!==cachedTs&&syncConfig.scriptUrl){
-            localStorage.removeItem('hpdc-bg-url');
-            fetch(syncConfig.scriptUrl+'?action=bg')
-              .then(r=>r.json())
-              .then(bg=>{if(bg.data){localStorage.setItem('hpdc-bg',bg.data);localStorage.setItem('hpdc-bg-ts',String(bg.ts||s.background_ts));applyBg();}})
-              .catch(()=>{});
-          }
-        }
-        if(s.background_url&&!s.background_ts){localStorage.setItem('hpdc-bg-url',s.background_url);applyBg();}
+        if(s.background_url){localStorage.setItem('hpdc-bg-url',s.background_url);applyBg();}
         if(s.burn_rate){const monthly=parseFloat(String(s.burn_rate).replace(/[$,]/g,''));if(!isNaN(monthly)&&monthly>0){burnRates=[{id:'sheet',effectiveDate:'1/1/2020',dailyTotal:monthly/30,note:'From sheet settings'}];localStorage.setItem('hpdc-burn',JSON.stringify(burnRates));}}
         if(s.alert_threshold!=null){alertThreshold=parseFloat(s.alert_threshold)||alertThreshold;localStorage.setItem('hpdc-at',alertThreshold);}
         if(s.core_return_days!=null){coreReturnDays=parseInt(s.core_return_days)||coreReturnDays;localStorage.setItem('hpdc-crd',coreReturnDays);}
@@ -904,13 +886,15 @@ async function checkTrackingNum(tn,btnEl){
   }
   render();
 }
-function sendReminderFromGAS(ordId,btnEl){
+async function sendReminderFromGAS(ordId,btnEl){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   const tok=reminderToken||localStorage.getItem('hpdc-rtoken')||'';
   if(!tok){alert('Reminder token not set — add it in Settings → Reminder Token.');return;}
-  // Open GAS in new tab (bypasses CORS entirely — same approach digest email links use)
-  window.open(GAS_BASE+'?action=send_app&id='+encodeURIComponent(o.id)+'&token='+encodeURIComponent(tok));
-  // Log reminder immediately in the app
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='⏳ Sending…';}
+  const url=GAS_BASE+'?action=send_app&id='+encodeURIComponent(o.id)+'&token='+encodeURIComponent(tok);
+  const w=window.open(url,'_blank','width=1,height=1,top=-100,left=-100');
+  await new Promise(r=>setTimeout(r,3000));
+  try{if(w&&!w.closed)w.close();}catch(ex){}
   pushUndo();
   if(!o.reminderLog)o.reminderLog=[];
   const dt=new Date();
@@ -953,10 +937,6 @@ function copyEmail(ordId){const o=orders.find(x=>x.id===ordId);if(!o)return;navi
 function emailCoreReminder(ordId){sendReminderAndLog(ordId);}
 
 // ── GOOGLE REVIEWS ────────────────────────────────────────────────────────────
-function pushReviewState_(){
-  if(!syncConfig.scriptUrl)return;
-  fetch(syncConfig.scriptUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reviewState:googleReviewState})}).catch(()=>{});
-}
 async function sendReviewEmail(ordId,btn){
   const o=orders.find(x=>x.id===ordId);if(!o)return;
   if(!o.customerEmail){alert('No email for this order.');return;}
@@ -972,7 +952,6 @@ async function sendReviewEmail(ordId,btn){
   const d=new Date();
   googleReviewState[o.orderNum]={sent:true,sentDate:(d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear()};
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
-  pushReviewState_();
   render();
 }
 async function sendAllReady(){
@@ -997,7 +976,6 @@ function skipReview(orderNum){
   googleReviewState[orderNum]=googleReviewState[orderNum]||{};
   googleReviewState[orderNum].skipped=true;
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
-  pushReviewState_();
   render();
 }
 function unskipReview(orderNum){
@@ -1006,7 +984,6 @@ function unskipReview(orderNum){
     if(!googleReviewState[orderNum].sent)delete googleReviewState[orderNum];
   }
   localStorage.setItem('hpdc-review-state',JSON.stringify(googleReviewState));
-  pushReviewState_();
   render();
 }
 function reviewsV(){
@@ -1740,7 +1717,15 @@ function labelsV(){
     daysAged(o.date)>coreReturnDays?overdue.push(o):inWindow.push(o);
   });
   const voided=orders.filter(o=>o.warrantyVoided);
-  overdue.sort((a,b)=>daysAged(b.date)-daysAged(a.date));
+  overdue.sort((a,b)=>{
+    const aLog=a.reminderLog||[],bLog=b.reminderLog||[];
+    const aLast=aLog.length?aLog[aLog.length-1]:null;
+    const bLast=bLog.length?bLog[bLog.length-1]:null;
+    if(!aLast&&bLast)return -1;
+    if(aLast&&!bLast)return 1;
+    if(aLast&&bLast){const da=pd(aLast),db=pd(bLast);if(da&&db)return da-db;}
+    return daysAged(b.date)-daysAged(a.date);
+  });
 
   if(!withLabels.length&&!voided.length)return`<div class="empty"><h3>No cores tracked yet</h3><p>Add a return label to an order to start tracking.</p></div>`;
 
@@ -2352,27 +2337,7 @@ if(syncConfig.enabled&&syncConfig.scriptUrl){
     // Will fetch after unlock
   } else {
     document.getElementById('view').innerHTML='<div style="padding:60px;text-align:center;color:var(--text3);font-size:14px">Loading from cloud…</div>';
-    syncFromCloud().then(()=>{
-      // Push local review state to cloud once per session
-      if(Object.keys(googleReviewState).length>0&&!sessionStorage.getItem('rs-pushed')){
-        sessionStorage.setItem('rs-pushed','1');
-        pushReviewState_();
-      }
-      // Check for background directly from GAS once per session — independent of tracker JSON
-      if(!sessionStorage.getItem('bg-checked')){
-        sessionStorage.setItem('bg-checked','1');
-        fetch(syncConfig.scriptUrl+'?action=bg')
-          .then(r=>r.json())
-          .then(bg=>{
-            if(bg.data&&bg.ts&&String(bg.ts)!==localStorage.getItem('hpdc-bg-ts')){
-              localStorage.setItem('hpdc-bg',bg.data);
-              localStorage.setItem('hpdc-bg-ts',String(bg.ts));
-              applyBg();
-            }
-          }).catch(()=>{});
-      }
-      render();startAutoPoll();
-    }).catch(()=>render());
+    syncFromCloud().then(()=>{render();startAutoPoll();}).catch(()=>render());
   }
 } else {
   render();
