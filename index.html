@@ -477,6 +477,14 @@ function mergeFields(saved){
 function saveAll(){
   try{localStorage.setItem('hpdc-dexp',JSON.stringify(dailyExpenses));localStorage.setItem('hpdc-dov',JSON.stringify(dailyOverrides));localStorage.setItem('hpdc-reviewed',JSON.stringify([...reviewedOrders]));stamp();}catch(e){}
 }
+function saveReminderLogs(){
+  const logs={};
+  orders.forEach(o=>{if(o.reminderLog&&o.reminderLog.length)logs[o.id||o.orderNum]=o.reminderLog;});
+  try{localStorage.setItem('hpdc-rlogs',JSON.stringify(logs));}catch(e){}
+}
+function loadReminderLogs(){
+  try{return JSON.parse(localStorage.getItem('hpdc-rlogs')||'{}');}catch(e){return{};}
+}
 function savePeriods(){try{localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}catch(e){}}
 function dedupOrders(){
   const seen=new Map();
@@ -552,7 +560,18 @@ async function syncFromCloud(){
     const rec=await r.json();
     if(rec._ts&&rec.orders){
       // Cloud is the only source of truth — take it directly, no merge
+      // reminderLog is app-only (not in the sheet) — preserve it across syncs
+      const prevLogs=new Map(orders.map(o=>[o.id||o.orderNum,o.reminderLog||[]]));
+      const storedLogs=loadReminderLogs();
       orders=rec.orders;
+      orders.forEach(o=>{
+        const key=o.id||o.orderNum;
+        const prev=prevLogs.get(key)||[];
+        const stored=storedLogs[key]||[];
+        const cloud=o.reminderLog||[];
+        const merged=[...new Set([...cloud,...prev,...stored])].sort();
+        if(merged.length)o.reminderLog=merged;
+      });
       // Never write orders to localStorage
       if(rec.fcPeriods){fcPeriods=rec.fcPeriods.map(migratePeriod);localStorage.setItem('hpdc-periods',JSON.stringify(fcPeriods));}
       if(rec.customExpenses){customExpenses=rec.customExpenses;localStorage.setItem('hpdc-cx',JSON.stringify(customExpenses));}
@@ -897,7 +916,7 @@ async function sendReminderFromGAS(ordId,btnEl){
   if(!o.reminderLog)o.reminderLog=[];
   const dt=new Date();
   o.reminderLog.push((dt.getMonth()+1)+'/'+dt.getDate()+'/'+dt.getFullYear());
-  saveAll();render();
+  saveReminderLogs();saveAll();render();
 }
 function buildView(){
   if(view==='daily')return dailyV();if(view==='summary')return summaryV();
@@ -926,7 +945,7 @@ function sendReminderAndLog(ordId){
   if(!o.reminderLog)o.reminderLog=[];
   const d=new Date();
   o.reminderLog.push((d.getMonth()+1)+'/'+d.getDate()+'/'+d.getFullYear());
-  saveAll();render();
+  saveReminderLogs();saveAll();render();
   window.open('mailto:'+o.customerEmail+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body));
 }
 function buildEmailLines(o){return getReminderTemplate(o,(o.reminderLog||[]).length+1);}
