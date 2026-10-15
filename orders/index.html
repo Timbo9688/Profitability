@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>HDPC Orders</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="HDPC Orders">
+<meta name="theme-color" content="#171c22">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.json">
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{--red:#ee1c25;--dark:#171c22;--bg:#f1f3f5;--line:#dde1e6;--mut:#5d6975}
+html,body{margin:0;background:var(--bg);color:#182029;font:16px/1.4 -apple-system,system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--dark);color:#fff;border-top:4px solid var(--red);padding:calc(env(safe-area-inset-top) + 10px) 14px 10px}
+.top{display:flex;align-items:center;gap:10px}
+.top h1{font-size:19px;margin:0;flex:1}
+.top small{color:#aab3bd;font-size:13px;font-weight:400}
+.iconbtn{background:#2a313a;border:0;color:#fff;font-size:20px;width:40px;height:40px;border-radius:10px}
+.iconbtn.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+#q{width:100%;margin-top:10px;padding:11px 12px;border-radius:10px;border:0;font-size:16px;background:#fff}
+.chips{display:flex;gap:7px;overflow-x:auto;padding:10px 0 2px;scrollbar-width:none}.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid #3a434e;background:transparent;color:#d6dbe0;padding:6px 12px;border-radius:99px;font-size:14px}
+.chip.on{background:var(--red);border-color:var(--red);color:#fff;font-weight:600}
+main{padding:12px 12px calc(env(safe-area-inset-bottom) + 24px)}
+.board{background:#fff8e1;border:1px solid #f0d78a;border-radius:12px;padding:4px 12px;margin-bottom:12px}
+.board h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#8a6d00;margin:8px 0 4px}
+.bnote{display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid #f3e3ad}
+.bnote:first-of-type{border-top:0}
+.bnote p{margin:0;flex:1;word-break:break-word}
+.bnote button{flex:none;border:0;border-radius:7px;padding:5px 9px;font-size:13px;font-weight:600}
+.unseen{background:var(--red);color:#fff}.read{background:#e6e9ec;color:var(--mut)}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px;border-left:5px solid var(--sc,#c9ced4)}
+.row1{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--mut)}
+.row1 b{color:#182029;font-size:16px}
+.badge{margin-left:auto;padding:3px 9px;border-radius:7px;font-size:13px;font-weight:700;background:var(--sc,#e6e9ec);color:var(--st,#182029);white-space:nowrap}
+.heads{font-size:17px;font-weight:600;margin:6px 0 2px;word-break:break-word}
+.kv{font-size:14px;margin-top:5px;word-break:break-word;white-space:pre-wrap}
+.kv span{color:var(--mut);font-weight:600}
+.empty{text-align:center;color:var(--mut);padding:30px 10px}
+#login{position:fixed;inset:0;background:var(--dark);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;padding:24px;z-index:20}
+#login .logo{width:72px;height:72px;border-radius:18px;background:var(--red);display:grid;place-items:center;font-weight:800;font-size:28px;margin-bottom:16px}
+#login input{font-size:28px;letter-spacing:.3em;text-align:center;width:210px;padding:12px;border-radius:12px;border:0;margin:18px 0 12px}
+.btn{background:var(--red);color:#fff;border:0;border-radius:10px;padding:13px 20px;font-size:17px;font-weight:700;width:100%}
+.btn.gray{background:#e6e9ec;color:#182029}
+.err{color:#ff8a8f;min-height:22px;font-size:15px;text-align:center}
+#sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10;display:none;align-items:flex-end}
+#sheet.open{display:flex}
+.panel{background:#fff;width:100%;max-height:92vh;overflow:auto;border-radius:18px 18px 0 0;padding:16px 16px calc(env(safe-area-inset-bottom) + 16px)}
+.panel h3{margin:0 0 2px;font-size:19px}
+.panel .sub{color:var(--mut);font-size:14px;margin-bottom:6px;word-break:break-word}
+.panel label{display:block;font-weight:700;font-size:14px;margin:14px 0 6px}
+.panel input,.panel textarea{width:100%;font:16px -apple-system,system-ui,sans-serif;padding:10px;border:1px solid var(--line);border-radius:9px}
+.panel textarea{min-height:76px}
+.picks{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:7px}
+.pick{border:1px solid var(--line);background:#f6f7f8;border-radius:8px;padding:7px 11px;font-size:14px;color:#182029}
+.pick.on{background:var(--dark);color:#fff;border-color:var(--dark)}
+.actions{display:flex;gap:10px;margin-top:18px}
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 20px);transform:translateX(-50%);background:#182029;color:#fff;padding:10px 16px;border-radius:10px;font-size:15px;z-index:30;display:none;max-width:90vw;text-align:center}
+</style>
+</head>
+<body>
+<div id="login">
+  <div class="logo">HD</div>
+  <div style="font-size:22px;font-weight:700">HDPC Orders</div>
+  <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">
+  <div class="err" id="loginErr"></div>
+  <button class="btn" style="max-width:210px" onclick="login()">Open</button>
+</div>
+
+<header>
+  <div class="top">
+    <h1>HDPC Orders <small id="count"></small></h1>
+    <button class="iconbtn" id="refreshBtn" onclick="load()" aria-label="Refresh">⟳</button>
+  </div>
+  <input id="q" type="search" placeholder="Search customer, order #, heads, notes…" oninput="render()">
+  <div class="chips" id="chips"></div>
+</header>
+<main>
+  <div id="board"></div>
+  <div id="list"></div>
+  <div class="empty" id="updated"></div>
+</main>
+
+<div id="sheet" onclick="if(event.target===this)closeEdit()"><div class="panel" id="panel"></div></div>
+<div id="toast"></div>
+
+<script>
+const API = 'https://script.google.com/macros/s/AKfycbxZS62ZMj-SJhzvtag7cqMEXOs5KrmvOsgH7MYC27zT4Gwcn93x3FlC37g3jwDTtzctdw/exec';
+// Column positions in the Orders tab (A=0)
+const C = { date: 0, customer: 1, order: 2, qty: 3, heads: 4, status: 5, notes: 6, shipBy: 7, addl: 8, builder: 9 };
+const EDIT = [['F', C.status, 'Status'], ['J', C.builder, 'Builder'], ['G', C.notes, 'Notes'], ['I', C.addl, 'Additional Notes']];
+let data = null, filter = localStorage.hdpcFilter || 'Open', pin = localStorage.hdpcPin || '', editing = null, busy = false;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Some sheet cells literally contain "&amp;" (from the website export) — show them as "&"
+const clean = s => String(s ?? '').replace(/&amp;/g, '&');
+const key = s => String(s ?? '').trim().toUpperCase();
+
+function toast(msg, ms = 2500) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms); }
+
+async function api(body) {
+  const res = body
+    ? await fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ...body, pin }) })
+    : await fetch(API + '?pin=' + encodeURIComponent(pin));
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'Error');
+  return j;
+}
+
+async function login() {
+  pin = $('pin').value.trim();
+  $('loginErr').textContent = '';
+  try { await load(true); localStorage.hdpcPin = pin; $('login').style.display = 'none'; }
+  catch (e) { $('loginErr').textContent = e.message; }
+}
+
+async function load(throwErr) {
+  if (busy) return; busy = true;
+  $('refreshBtn').classList.add('spin');
+  try {
+    data = await api();
+    render();
+  } catch (e) {
+    if (throwErr) throw e;
+    if (/PIN/.test(e.message)) { localStorage.removeItem('hdpcPin'); $('login').style.display = 'flex'; $('loginErr').textContent = e.message; }
+    else toast('Could not refresh: ' + e.message);
+  } finally { busy = false; $('refreshBtn').classList.remove('spin'); }
+}
+
+// Use the sheet's own status-cell color for the badge, if it has one
+function colors(o) {
+  const bg = (o.bg[C.status] || '#ffffff').toLowerCase();
+  if (bg === '#ffffff') return '';
+  const n = parseInt(bg.slice(1), 16), lum = 0.299 * (n >> 16) + 0.587 * (n >> 8 & 255) + 0.114 * (n & 255);
+  return `--sc:${bg};--st:${lum < 140 ? '#fff' : '#182029'}`;
+}
+
+// Most-used values in a column, for the quick-pick buttons and filter chips
+function common(i, max) {
+  const m = new Map();
+  data.orders.forEach(o => {
+    const v = o.cells[i].trim(); if (!v || v.length > 20) return;
+    const e = m.get(key(v)) || { label: v, n: 0 }; e.n++; m.set(key(v), e);
+  });
+  return [...m.values()].sort((a, b) => b.n - a.n).slice(0, max);
+}
+
+function matches(o) {
+  const s = key(o.cells[C.status]);
+  if (filter === 'Open' && s === 'SHIPPED') return false;
+  if (filter === 'No status' && s) return false;
+  if (!['Open', 'All', 'No status'].includes(filter) && s !== key(filter)) return false;
+  const q = $('q').value.trim().toLowerCase();
+  return !q || o.cells.join(' ').toLowerCase().includes(q);
+}
+
+function render() {
+  if (!data) return;
+  const noStatus = data.orders.filter(o => !o.cells[C.status].trim()).length;
+  const open = data.orders.filter(o => key(o.cells[C.status]) !== 'SHIPPED').length;
+  const chips = [['Open', open], ['All', data.orders.length], ...common(C.status, 30).map(s => [s.label, s.n]), ...(noStatus ? [['No status', noStatus]] : [])];
+  if (!chips.some(c => key(c[0]) === key(filter))) filter = 'Open';
+  $('chips').innerHTML = chips.map(([l, n]) => `<button class="chip ${key(l) === key(filter) ? 'on' : ''}" data-f="${esc(l)}">${esc(l)} ${n}</button>`).join('');
+  $('chips').querySelectorAll('.chip').forEach(b => b.onclick = () => { filter = b.dataset.f; localStorage.hdpcFilter = filter; render(); window.scrollTo(0, 0); });
+
+  $('board').innerHTML = data.board.length ? `<div class="board"><h2>Message board</h2>${data.board.map((b, i) =>
+    `<div class="bnote"><p>${esc(clean(b.text))}</p><button class="${b.status === 'Read' ? 'read' : 'unseen'}" onclick="toggleBoard(${i})">${esc(b.status || 'Unseen')}</button></div>`).join('')}</div>` : '';
+
+  // Newest orders first (the sheet adds them at the bottom)
+  const list = data.orders.filter(matches).reverse();
+  $('count').textContent = `· ${list.length}`;
+  const h = data.headers;
+  const extra = h.map((name, i) => [name, i]).filter(([name, i]) => i > C.builder && name.trim());
+  $('list').innerHTML = list.length ? list.map(o => {
+    const c = o.cells, kv = (i, label) => c[i] ? `<div class="kv"><span>${esc(label)}:</span> ${esc(clean(c[i]))}</div>` : '';
+    return `<div class="card" style="${colors(o)}" onclick="openEdit(${o.row})">
+      <div class="row1"><b>${esc(c[C.order] ? '#' + c[C.order] : '—')}</b> ${esc(c[C.customer])}${c[C.date] ? ' · ' + esc(c[C.date]) : ''}
+        ${c[C.status] ? `<span class="badge">${esc(c[C.status])}</span>` : ''}</div>
+      <div class="heads">${c[C.qty] ? esc(c[C.qty]) + '× ' : ''}${esc(clean(c[C.heads]))}</div>
+      ${kv(C.shipBy, h[C.shipBy].trim() || 'Ship by')}${kv(C.builder, h[C.builder] || 'Builder')}${kv(C.notes, h[C.notes] || 'Notes')}${kv(C.addl, h[C.addl] || 'Additional Notes')}
+      ${extra.map(([name, i]) => kv(i, name)).join('')}
+    </div>`;
+  }).join('') : `<div class="empty">No orders match.</div>`;
+  $('updated').textContent = 'Updated ' + new Date(data.fetched).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function openEdit(row) {
+  const o = data.orders.find(x => x.row === row); if (!o) return;
+  editing = o; const c = o.cells;
+  const field = ([col, i, label]) => {
+    const quick = (i === C.status || i === C.builder) ? `<div class="picks">${common(i, 10).map(p =>
+      `<button class="pick ${key(p.label) === key(c[i]) ? 'on' : ''}" onclick="setPick('${col}',this)">${esc(p.label)}</button>`).join('')}</div>` : '';
+    const input = (i === C.notes || i === C.addl)
+      ? `<textarea id="f${col}">${esc(c[i])}</textarea>` : `<input id="f${col}" value="${esc(c[i])}" autocomplete="off">`;
+    return `<label>${esc(label)}</label>${quick}${input}`;
+  };
+  $('panel').innerHTML = `<h3>${esc(c[C.order] ? '#' + c[C.order] : 'No order #')} · ${esc(c[C.customer])}</h3>
+    <div class="sub">${c[C.qty] ? esc(c[C.qty]) + '× ' : ''}${esc(clean(c[C.heads]))}<br>${esc(c[C.date])}${c[C.shipBy] ? ' · Ship by ' + esc(c[C.shipBy]) : ''}</div>
+    ${EDIT.map(field).join('')}
+    <div class="actions"><button class="btn gray" onclick="closeEdit()">Cancel</button><button class="btn" id="saveBtn" onclick="save()">Save</button></div>`;
+  $('sheet').classList.add('open');
+}
+function setPick(col, btn) { $('f' + col).value = btn.textContent; btn.parentNode.querySelectorAll('.pick').forEach(b => b.classList.toggle('on', b === btn)); }
+function closeEdit() { $('sheet').classList.remove('open'); editing = null; }
+
+async function save() {
+  const o = editing, c = o.cells, changes = EDIT.filter(([col, i]) => $('f' + col).value.trim() !== c[i].trim());
+  if (!changes.length) return closeEdit();
+  $('saveBtn').disabled = true; $('saveBtn').textContent = 'Saving…';
+  const expect = { customer: c[C.customer], order: c[C.order], heads: c[C.heads] };
+  try {
+    for (const [col, i, label] of changes) {
+      const r = await api({ row: o.row, col, expect, old: c[i], value: $('f' + col).value.trim() });
+      if (r.conflict) { c[i] = r.current; render(); toast(label + ': ' + r.error, 6000); openEdit(o.row); return; }
+      c[i] = r.value;
+    }
+    toast('Saved ✓'); closeEdit(); render();
+  } catch (e) {
+    toast(e.message, 5000);
+    $('saveBtn').disabled = false; $('saveBtn').textContent = 'Save';
+    if (/refresh/i.test(e.message)) { closeEdit(); load(); }
+  }
+}
+
+async function toggleBoard(i) {
+  const b = data.board[i], value = b.status === 'Read' ? 'Unseen' : 'Read';
+  try {
+    const r = await api({ row: b.row, col: 'F', expect: { text: b.text }, old: b.status, value });
+    if (r.conflict) { b.status = r.current; toast(r.error); } else b.status = r.value;
+    render();
+  } catch (e) { toast(e.message); load(); }
+}
+
+$('pin').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+if (pin) { $('login').style.display = 'none'; load(); }
+// Auto-refresh every minute while open, and whenever the app comes back to the foreground
+setInterval(() => { if (document.visibilityState === 'visible' && pin && !editing) load(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && pin && !editing) load(); });
+</script>
+</body>
+</html>
