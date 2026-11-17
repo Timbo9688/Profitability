@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>HDPC Orders</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="HDPC Orders">
+<meta name="theme-color" content="#171c22">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.json">
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+:root{--red:#ee1c25;--dark:#171c22;--bg:#eef0f3;--line:#e2e5e9;--mut:#6b7682;--ink:#161c23;
+  --Teardown:#e8890c;--Build:#2563eb;--Done:#16a34a;--other:#8a94a0;--NewHeads:#2563eb}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.35 -apple-system,system-ui,sans-serif}
+button{font:inherit;cursor:pointer}
+
+header{position:sticky;top:0;z-index:5;background:var(--dark);color:#fff;padding:calc(env(safe-area-inset-top) + 10px) 14px 0;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+.top{display:flex;align-items:center;gap:10px}
+.top h1{font-size:20px;margin:0;flex:1;letter-spacing:-.01em}
+.top h1 i{font-style:normal;color:var(--red)}
+.iconbtn{background:#262d36;border:0;color:#fff;font-size:19px;width:38px;height:38px;border-radius:10px}
+.iconbtn.spin{animation:spin .9s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+#q{width:100%;margin-top:10px;padding:10px 12px;border-radius:10px;border:0;font-size:16px;background:#262d36;color:#fff}
+#q::placeholder{color:#8b95a1}
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 0;scrollbar-width:none}.tabs::-webkit-scrollbar{display:none}
+.tab{flex:none;border:0;background:#262d36;color:#c3cad2;padding:7px 12px;border-radius:9px;font-size:14px;font-weight:600}
+.tab b{display:inline-block;min-width:20px;margin-left:5px;padding:0 5px;border-radius:6px;background:rgba(255,255,255,.12);font-size:12px;line-height:18px;text-align:center}
+.tab.on{background:#fff;color:var(--ink)}
+.tab.on b{background:var(--tc,var(--ink));color:#fff}
+
+main{padding:12px 12px calc(env(safe-area-inset-bottom) + 30px);max-width:640px;margin:0 auto}
+
+.board{background:#fff;border-radius:14px;margin-bottom:14px;overflow:hidden;border:1px solid var(--line)}
+.board summary{list-style:none;display:flex;align-items:center;gap:8px;padding:11px 14px;font-weight:700;font-size:14px}
+.board summary::-webkit-details-marker{display:none}
+.board summary .pill{background:var(--red);color:#fff;border-radius:99px;font-size:12px;padding:1px 8px}
+.board summary .chev{margin-left:auto;color:var(--mut);transition:transform .2s}
+.board[open] summary .chev{transform:rotate(90deg)}
+.bnote{display:flex;gap:12px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);font-size:15px}
+.bnote p{margin:0;flex:1;word-break:break-word}
+.bnote.unseen p{font-weight:600}
+.bnote button{flex:none;border:0;border-radius:8px;padding:6px 10px;font-size:13px;font-weight:700}
+.bnote.unseen button{background:var(--red);color:#fff}
+.bnote.read button{background:#eef0f3;color:var(--mut)}
+
+.card{background:#fff;border-radius:14px;padding:13px 14px 12px;margin-bottom:10px;border:1px solid var(--line);position:relative;overflow:hidden}
+.card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--sc,transparent)}
+.meta{display:flex;align-items:baseline;gap:8px;font-size:14px;color:var(--mut)}
+.meta .num{font-weight:800;color:var(--ink);font-size:15px}
+.meta .cust{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.meta .age{margin-left:auto;white-space:nowrap;font-size:13px}
+.meta .age.old{color:#c2410c;font-weight:700}
+.heads{font-size:17px;font-weight:700;margin:5px 0 0;word-break:break-word}
+.qty{display:inline-block;background:var(--ink);color:#fff;border-radius:6px;font-size:13px;padding:0 6px;margin-right:6px;vertical-align:2px}
+.info{margin-top:7px;font-size:14px;color:#3d4752;word-break:break-word;white-space:pre-wrap}
+.info span{color:var(--mut);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.03em;margin-right:4px}
+.sheetsays{margin-top:10px;font-size:13px;color:var(--mut)}
+.sheetsays b{color:var(--ink);background:#eef0f3;border-radius:6px;padding:1px 7px}
+.seg{display:flex;margin-top:11px;background:#eef0f3;border-radius:11px;padding:3px;gap:3px}
+.seg button{flex:1;border:0;background:transparent;border-radius:9px;padding:10px 0;font-size:15px;font-weight:700;color:#59636e;transition:background .15s,color .15s}
+.seg button.on{background:var(--c);color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.seg.saving{opacity:.55;pointer-events:none}
+
+/* New heads — auto-highlighted blue */
+.card.newhead{background:#e8f1ff;border-color:#8fb4f2}
+.newtag{display:inline-block;background:#2563eb;color:#fff;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 6px;margin-right:6px;vertical-align:2px}
+.card.newhead .seg{background:#d6e5fc}
+
+/* Morale tab */
+.tab.morale{background:#3a2a10;color:#ffcf7a}.tab.morale.on{background:#ffcf7a;color:#3a2a10}
+#morale .mcard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+#morale .quote{background:var(--dark);color:#fff;border:0}
+.qlabel{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--red)}
+#morale blockquote{margin:8px 0 6px;font-size:20px;font-weight:700;line-height:1.3}
+.qby{color:#9aa4ae;font-size:14px}
+.quote button{margin-top:12px;border:0;background:#262d36;color:#fff;border-radius:9px;padding:8px 12px;font-weight:700;font-size:14px}
+/* Secret tab — question/answer/background/video all come from the "Secret" sheet tab */
+.tab.secret{background:#1f1536;color:#c4b5fd}.tab.secret.on{background:#c4b5fd;color:#1f1536}
+#secret{border-radius:16px;min-height:calc(100vh - 170px);padding:28px 16px;background:#171c22 center/cover no-repeat;color:#fff;display:flex;flex-direction:column;justify-content:center;text-align:center}
+#secret .sq{font-size:24px;font-weight:800;line-height:1.25;text-shadow:0 2px 10px rgba(0,0,0,.7);margin-bottom:22px;white-space:pre-wrap}
+.blanks{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.blanks input{width:118px;padding:11px 8px;border-radius:10px;border:2px solid rgba(255,255,255,.55);background:rgba(0,0,0,.5);color:#fff;font-size:17px;text-align:center}
+.blanks input:focus{outline:0;border-color:#fff}
+.blanks.shake{animation:shake .4s}
+@keyframes shake{20%,60%{transform:translateX(-9px)}40%,80%{transform:translateX(9px)}}
+#secret .sgo{margin:22px auto 0;border:0;border-radius:10px;padding:12px 30px;background:#fff;color:var(--ink);font-weight:800;font-size:16px}
+#secret .smsg{min-height:24px;margin-top:14px;font-weight:700;text-shadow:0 1px 6px rgba(0,0,0,.8)}
+#vid{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:16px}
+#vid .vbox{position:relative;width:min(100%,560px)}
+#vid .vslot{aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
+#vid iframe,#vid video{width:100%;height:100%;border:0;display:block}
+#vid .vx{position:absolute;top:-46px;right:0;border:0;background:#fff;color:var(--ink);font-weight:800;border-radius:99px;width:38px;height:38px;font-size:17px}
+
+.empty{text-align:center;color:var(--mut);padding:36px 10px;font-size:15px}
+.foot{text-align:center;color:var(--mut);font-size:13px;padding:6px 0}
+
+#login{position:fixed;inset:0;background:var(--dark);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;padding:24px;z-index:20}
+#login .logo{width:72px;height:72px;border-radius:18px;background:var(--red);display:grid;place-items:center;font-weight:800;font-size:28px;margin-bottom:16px}
+#login input{font-size:28px;letter-spacing:.3em;text-align:center;width:200px;padding:12px;border-radius:12px;border:0;margin:18px 0 12px}
+#login button{background:var(--red);color:#fff;border:0;border-radius:10px;padding:13px;font-size:17px;font-weight:700;width:200px}
+.err{color:#ff8a8f;min-height:22px;font-size:15px;text-align:center}
+
+#toast{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 16px);max-width:520px;margin:0 auto;background:var(--ink);color:#fff;padding:12px 14px;border-radius:12px;font-size:15px;z-index:30;display:none;align-items:center;gap:12px;box-shadow:0 6px 20px rgba(0,0,0,.3)}
+#toast.show{display:flex}
+#toast span{flex:1}
+#toast button{border:0;background:#fff;color:var(--ink);font-weight:800;border-radius:8px;padding:7px 12px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="login">
+  <div class="logo">HD</div>
+  <div style="font-size:22px;font-weight:700">HDPC Orders</div>
+  <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN">
+  <div class="err" id="loginErr"></div>
+  <button onclick="login()">Open</button>
+</div>
+
+<header>
+  <div class="top">
+    <h1>HDPC <i>Orders</i></h1>
+    <button class="iconbtn" id="refreshBtn" onclick="load()" aria-label="Refresh">⟳</button>
+  </div>
+  <input id="q" type="search" placeholder="Search customer, order #, heads…" oninput="render()">
+  <div class="tabs" id="tabs"></div>
+</header>
+<main>
+  <div id="board"></div>
+  <div id="list"></div>
+  <div class="foot" id="updated"></div>
+  <div id="morale" hidden>
+    <div class="mcard quote">
+      <div class="qlabel">Quote of the day</div>
+      <blockquote id="qt"></blockquote>
+      <div class="qby" id="qb"></div>
+      <button onclick="showQuote(true)">Another one</button>
+    </div>
+  </div>
+  <div id="secretView" hidden>
+    <div id="secret">
+      <div class="sq" id="sq"></div>
+      <div class="blanks" id="blanks"></div>
+      <button class="sgo" id="sgo" onclick="trySecret()">Unlock</button>
+      <div class="smsg" id="smsg"></div>
+    </div>
+  </div>
+</main>
+<div id="vid" hidden><div class="vbox"><button class="vx" onclick="closeVid()" aria-label="Close">✕</button><div class="vslot" id="vslot"></div></div></div>
+<div id="toast"><span id="toastMsg"></span><button id="toastBtn" hidden>Undo</button></div>
+
+<script>
+const API = 'https://script.google.com/macros/s/AKfycbxZS62ZMj-SJhzvtag7cqMEXOs5KrmvOsgH7MYC27zT4Gwcn93x3FlC37g3jwDTtzctdw/exec';
+// Column positions in the Orders tab (A=0)
+const C = { date: 0, customer: 1, order: 2, qty: 3, heads: 4, status: 5, notes: 6, shipBy: 7, addl: 8, builder: 9 };
+let STATUSES = ['Teardown', 'Build', 'Done'];
+let data = null, filter = localStorage.hdpcTab || 'Active', pin = localStorage.hdpcPin || '', busy = false, saving = 0;
+let boardOpen = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// Some sheet cells literally contain "&amp;" (from the website export) — show them as "&"
+const clean = s => String(s ?? '').replace(/&amp;/g, '&').trim();
+const key = s => String(s ?? '').trim().toUpperCase();
+const known = s => STATUSES.find(x => key(x) === key(s));   // "build" → "Build"
+// New heads = the word "new" in the HEADS column (carburetors excluded)
+const isNewHead = s => /\bnew\b/i.test(s) && !/carb/i.test(s);
+
+function toast(msg, undo, ms = 3000) {
+  $('toastMsg').textContent = msg;
+  const b = $('toastBtn'); b.hidden = !undo; b.onclick = () => { hideToast(); undo(); };
+  $('toast').classList.add('show');
+  clearTimeout(toast.h); toast.h = setTimeout(hideToast, undo ? 6000 : ms);
+}
+function hideToast() { $('toast').classList.remove('show'); }
+
+async function api(body) {
+  const res = body
+    ? await fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ ...body, pin }) })
+    : await fetch(API + '?pin=' + encodeURIComponent(pin));
+  const j = await res.json();
+  if (!j.ok) throw new Error(j.error || 'Error');
+  return j;
+}
+
+async function login() {
+  pin = $('pin').value.trim();
+  $('loginErr').textContent = '';
+  try { await load(true); localStorage.hdpcPin = pin; $('login').style.display = 'none'; }
+  catch (e) { $('loginErr').textContent = e.message; }
+}
+
+async function load(throwErr) {
+  if (busy || saving) return; busy = true;
+  $('refreshBtn').classList.add('spin');
+  try {
+    data = await api();
+    if (data.statuses) STATUSES = data.statuses;
+    render();
+  } catch (e) {
+    if (throwErr) throw e;
+    if (/PIN/.test(e.message)) { localStorage.removeItem('hdpcPin'); $('login').style.display = 'flex'; $('loginErr').textContent = e.message; }
+    else toast('Could not refresh: ' + e.message);
+  } finally { busy = false; $('refreshBtn').classList.remove('spin'); }
+}
+
+// Tabs: Active (everything not shipped), one per crew status, Other, Shipped, All
+function group(o) {
+  const s = o.cells[C.status];
+  if (known(s)) return known(s);
+  return key(s) === 'SHIPPED' ? 'Shipped' : 'Other';
+}
+function tabs() {
+  const n = t => data.orders.filter(o => t === 'All' || (t === 'Active' ? group(o) !== 'Shipped' : t === 'New Heads' ? group(o) !== 'Shipped' && isNewHead(o.cells[C.heads]) : group(o) === t)).length;
+  return ['Active', 'New Heads', ...STATUSES, 'Other', 'Shipped', 'All'].map(t => [t, n(t)]).filter(([t, c]) => c || ['Active', 'New Heads', ...STATUSES].includes(t));
+}
+function matches(o) {
+  if (['Active', 'New Heads'].includes(filter) && group(o) === 'Shipped') return false;
+  if (filter === 'New Heads' && !isNewHead(o.cells[C.heads])) return false;
+  if (!['Active', 'New Heads', 'All'].includes(filter) && group(o) !== filter) return false;
+  const q = $('q').value.trim().toLowerCase();
+  return !q || o.cells.join(' ').toLowerCase().includes(q);
+}
+
+function age(d) {
+  const t = Date.parse(d); if (!t) return '';
+  const days = Math.floor((Date.now() - t) / 864e5);
+  return days <= 0 ? 'today' : days === 1 ? '1 day' : days + ' days';
+}
+
+function render() {
+  if (!data) return;
+  const tb = tabs();
+  if (filter === 'Secret' ? !data.secret : filter !== 'Morale' && !tb.some(([t]) => t === filter)) filter = 'Active';
+  $('tabs').innerHTML = tb.map(([t, c]) =>
+    `<button class="tab ${t === filter ? 'on' : ''}" style="--tc:var(--${STATUSES.includes(t) ? t : t === 'New Heads' ? 'NewHeads' : 'red'})" data-t="${esc(t)}">${esc(t)}<b>${c}</b></button>`).join('')
+    + `<button class="tab morale ${filter === 'Morale' ? 'on' : ''}" data-t="Morale">💪 Morale</button>`
+    + (data.secret ? `<button class="tab secret ${filter === 'Secret' ? 'on' : ''}" data-t="Secret" aria-label="Secret">🔒</button>` : '');
+  $('tabs').querySelectorAll('.tab').forEach(b => b.onclick = () => { filter = b.dataset.t; try { localStorage.hdpcTab = filter; } catch (e) {} render(); window.scrollTo(0, 0); });
+
+  const view = filter === 'Morale' ? 'morale' : filter === 'Secret' ? 'secret' : '';
+  $('q').hidden = $('board').hidden = $('list').hidden = $('updated').hidden = !!view;
+  $('morale').hidden = view !== 'morale';
+  $('secretView').hidden = view !== 'secret';
+  if (view === 'morale') { renderMorale(); return; }
+  if (view === 'secret') { renderSecret(); return; }
+
+  renderBoard();
+
+  // Oldest first — same order as the sheet
+  const list = data.orders.filter(matches);
+  const h = data.headers;
+  $('list').innerHTML = list.length ? list.map(o => {
+    const c = o.cells, cur = known(c[C.status]), a = age(c[C.date]);
+    const info = (i, label) => clean(c[i]) ? `<div class="info"><span>${esc(label)}</span>${esc(clean(c[i]))}</div>` : '';
+    const extra = h.map((name, i) => i > C.builder && name.trim() ? info(i, name) : '').join('');
+    const nh = isNewHead(c[C.heads]);
+    return `<div class="card ${nh ? 'newhead' : ''}" id="r${o.row}" style="--sc:var(--${cur || (c[C.status].trim() ? 'other' : 'none')})">
+      <div class="meta"><span class="num">${esc(c[C.order] ? '#' + c[C.order] : 'No #')}</span><span class="cust">${esc(c[C.customer])}</span>
+        <span class="age ${parseInt(a) >= 10 ? 'old' : ''}">${esc(c[C.date])}${a ? ' · ' + a : ''}</span></div>
+      <div class="heads">${nh ? '<span class="newtag">NEW</span>' : ''}${c[C.qty] ? `<span class="qty">${esc(c[C.qty])}×</span>` : ''}${esc(clean(c[C.heads]))}</div>
+      ${info(C.shipBy, 'Ship by')}${info(C.notes, 'Notes')}${info(C.addl, 'More')}${info(C.builder, 'Builder')}${extra}
+      ${c[C.status].trim() && !cur ? `<div class="sheetsays">Sheet says <b>${esc(c[C.status])}</b></div>` : ''}
+      <div class="seg">${STATUSES.map(s => `<button class="${s === cur ? 'on' : ''}" style="--c:var(--${s})" onclick="setStatus(${o.row},'${s}')">${s}</button>`).join('')}</div>
+    </div>`;
+  }).join('') : `<div class="empty">No orders here.</div>`;
+  $('updated').textContent = list.length + ' orders · updated ' + new Date(data.fetched).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function renderBoard() {
+  const b = data.board; if (!b.length) { $('board').innerHTML = ''; return; }
+  const unseen = b.filter(x => x.status !== 'Read').length;
+  if (boardOpen === null) boardOpen = unseen > 0;
+  $('board').innerHTML = `<details class="board" ${boardOpen ? 'open' : ''} ontoggle="boardOpen=this.open">
+    <summary>Message board ${unseen ? `<span class="pill">${unseen} new</span>` : ''}<span class="chev">›</span></summary>
+    ${b.map((x, i) => `<div class="bnote ${x.status === 'Read' ? 'read' : 'unseen'}"><p>${esc(clean(x.text))}</p>
+      <button onclick="toggleBoard(${i})">${x.status === 'Read' ? 'Read' : 'Mark read'}</button></div>`).join('')}
+  </details>`;
+}
+
+async function setStatus(row, value, isUndo) {
+  const o = data.orders.find(x => x.row === row); if (!o) return;
+  const c = o.cells, prev = c[C.status];
+  if (known(prev) === value) return;
+  if (!isUndo && prev.trim() && !known(prev) && !confirm(`This order is marked "${prev}". Change it to ${value}?`)) return;
+  const label = (c[C.order] ? '#' + c[C.order] : c[C.customer]);
+  const seg = document.querySelector(`#r${row} .seg`); seg && seg.classList.add('saving');
+  saving++;
+  try {
+    const r = await api({ row, col: 'F', expect: { customer: c[C.customer], order: c[C.order], heads: c[C.heads] }, old: prev, value });
+    if (r.conflict) { c[C.status] = r.current; toast(r.error, null, 5000); }
+    else {
+      c[C.status] = r.value;
+      // Undo only goes back to blank or a crew status (the backend won't write anything else)
+      const canUndo = !isUndo && (!prev.trim() || known(prev));
+      toast(`${label} → ${value || 'no status'}`, canUndo ? () => setStatus(row, known(prev) || '', true) : null);
+    }
+  } catch (e) {
+    toast(e.message, null, 5000);
+    if (/refresh/i.test(e.message)) { saving--; return load(); }
+  } finally { if (saving > 0) saving--; }
+  render();
+}
+
+async function toggleBoard(i) {
+  const b = data.board[i], value = b.status === 'Read' ? 'Unseen' : 'Read';
+  try {
+    const r = await api({ row: b.row, col: 'F', expect: { text: b.text }, old: b.status, value });
+    if (r.conflict) { b.status = r.current; toast(r.error); } else b.status = r.value;
+    render();
+  } catch (e) { toast(e.message); load(); }
+}
+
+// ---------- Morale tab ----------
+const QUOTES = [
+  ['Far and away the best prize that life offers is the chance to work hard at work worth doing.', 'Theodore Roosevelt'],
+  ['Opportunity is missed by most people because it is dressed in overalls and looks like work.', 'Thomas Edison'],
+  ['Start where you are. Use what you have. Do what you can.', 'Arthur Ashe'],
+  ["Don't count the days, make the days count.", 'Muhammad Ali'],
+  ['Perfection is not attainable, but if we chase perfection we can catch excellence.', 'Vince Lombardi'],
+  ['It does not matter how slowly you go as long as you do not stop.', 'Confucius'],
+  ['Well done is better than well said.', 'Benjamin Franklin'],
+  ['The only way to do great work is to love what you do.', 'Steve Jobs'],
+  ["It always seems impossible until it's done.", 'Nelson Mandela'],
+  ['Quality is not an act, it is a habit.', 'Will Durant, on Aristotle'],
+  ['Hard work beats talent when talent fails to work hard.', 'Tim Notke'],
+  ['Measure twice, cut once.', 'Shop rule'],
+  ['Torque it right the first time and it never comes back.', 'Shop rule'],
+  ['Every head that leaves this shop has our name on it.', 'HDPC'],
+  ['Somebody out there is waiting on this head to get back to work. Make it count.', 'HDPC'],
+  ['Clean bench, clean work.', 'Shop rule'],
+  ["Slow is smooth, smooth is fast.", 'Shop rule'],
+  ["A comeback costs more than doing it right. Check it twice.", 'Shop rule'],
+  ["Teardown, build, done. Repeat.", 'HDPC'],
+  ['Pride in the work is the best quality control there is.', 'HDPC'],
+  ["The truck can't run without you.", 'HDPC'],
+  ["Small wins stack up. One head at a time.", 'HDPC'],
+];
+const dayIdx = () => Math.floor((Date.now() - new Date().getTimezoneOffset() * 6e4) / 864e5);
+let quoteIdx = null;
+function showQuote(next) {
+  if (next) { let n; do n = Math.floor(Math.random() * QUOTES.length); while (n === quoteIdx); quoteIdx = n; }
+  else if (quoteIdx === null) quoteIdx = dayIdx() % QUOTES.length;
+  $('qt').textContent = '“' + QUOTES[quoteIdx][0] + '”';
+  $('qb').textContent = '— ' + QUOTES[quoteIdx][1];
+}
+
+function renderMorale() {
+  showQuote();
+}
+
+// ---------- Secret tab ----------
+const driveId = u => (u.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?(?:.*&)?id=)([\w-]+)/) || [])[1];
+function renderSecret() {
+  const s = data.secret;
+  // Only rebuild the blanks when Tim changes the question/answer, so a refresh doesn't wipe what they typed
+  const sig = s.question + '|' + s.blanks;
+  if (renderSecret.sig !== sig) {
+    renderSecret.sig = sig;
+    $('sq').textContent = s.question;
+    $('blanks').innerHTML = Array.from({ length: s.blanks }, () =>
+      `<input autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">`).join('');
+    const ins = [...$('blanks').children];
+    ins.forEach((el, i) => el.onkeydown = e => {
+      if (e.key === ' ' && ins[i + 1]) { e.preventDefault(); ins[i + 1].focus(); }       // space jumps to next blank
+      if (e.key === 'Enter') { e.preventDefault(); ins[i + 1] ? ins[i + 1].focus() : trySecret(); }
+      if (e.key === 'Backspace' && !el.value && ins[i - 1]) { e.preventDefault(); ins[i - 1].focus(); }
+    });
+    $('smsg').textContent = '';
+  }
+  const bg = (s.background || '').trim(), box = $('secret');
+  if (/^https?:\/\//i.test(bg)) {
+    const id = driveId(bg), src = id ? 'https://lh3.googleusercontent.com/d/' + id : bg;
+    box.style.backgroundColor = '#171c22'; box.style.backgroundImage = `url("${src.replace(/"/g, '%22')}")`;
+  } else { box.style.backgroundImage = 'none'; box.style.backgroundColor = bg || '#171c22'; }
+}
+
+async function trySecret() {
+  const ins = [...$('blanks').children], guess = ins.map(i => i.value.trim());
+  if (guess.some(g => !g)) { $('smsg').textContent = 'Fill in every blank.'; return; }
+  $('sgo').disabled = true; $('smsg').textContent = 'Checking…';
+  try {
+    const r = await api({ action: 'secret', guess: guess.join(' ') });
+    if (r.correct) {
+      $('smsg').textContent = '✅ Unlocked!';
+      ins.forEach(i => i.value = '');
+      if (r.video) showVid(r.video); else $('smsg').textContent = '✅ Correct! (No video set yet)';
+    } else {
+      $('smsg').textContent = '❌ Nope. Try again.';
+      const b = $('blanks'); b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake');
+    }
+  } catch (e) { $('smsg').textContent = e.message; }
+  finally { $('sgo').disabled = false; }
+}
+
+function showVid(u) {
+  u = u.trim();
+  const yt = (u.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/) || [])[1];
+  const dr = driveId(u);
+  let html;
+  if (yt) html = `<iframe src="https://www.youtube.com/embed/${yt}?autoplay=1&playsinline=1&rel=0" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>`;
+  else if (dr) html = `<iframe src="https://drive.google.com/file/d/${dr}/preview" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  else if (/\.(mp4|mov|m4v|webm)(\?|#|$)/i.test(u)) html = `<video src="${esc(u)}" controls autoplay playsinline></video>`;
+  else html = `<iframe src="${esc(u)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  $('vslot').innerHTML = html;
+  $('vid').hidden = false;
+}
+function closeVid() { $('vslot').innerHTML = ''; $('vid').hidden = true; }   // clearing the slot stops playback
+
+$('pin').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+if (pin) { $('login').style.display = 'none'; load(); }
+// Auto-refresh every minute while open, and whenever the app comes back to the foreground
+setInterval(() => { if (document.visibilityState === 'visible' && pin) load(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && pin) load(); });
+</script>
+</body>
+</html>
