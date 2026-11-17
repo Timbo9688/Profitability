@@ -96,7 +96,8 @@ main{padding:12px 12px calc(env(safe-area-inset-bottom) + 30px);max-width:640px;
 #secret .smsg{min-height:24px;margin-top:14px;font-weight:700;text-shadow:0 1px 6px rgba(0,0,0,.8)}
 #vid{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.85);display:flex;align-items:center;justify-content:center;padding:16px}
 #vid .vbox{position:relative;width:min(100%,560px)}
-#vid .vslot{aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
+#vid .vslot{aspect-ratio:16/9;max-height:calc(100vh - 120px);margin:0 auto;background:#000;border-radius:12px;overflow:hidden}
+#vid .vsnd{display:none;margin:12px auto 0;border:0;border-radius:99px;padding:10px 22px;background:#fff;color:var(--ink);font-weight:800;font-size:15px}
 #vid iframe,#vid video{width:100%;height:100%;border:0;display:block}
 #vid .vx{position:absolute;top:-46px;right:0;border:0;background:#fff;color:var(--ink);font-weight:800;border-radius:99px;width:38px;height:38px;font-size:17px}
 
@@ -153,7 +154,7 @@ main{padding:12px 12px calc(env(safe-area-inset-bottom) + 30px);max-width:640px;
     </div>
   </div>
 </main>
-<div id="vid" hidden><div class="vbox"><button class="vx" onclick="closeVid()" aria-label="Close">✕</button><div class="vslot" id="vslot"></div></div></div>
+<div id="vid" hidden><div class="vbox"><button class="vx" onclick="closeVid()" aria-label="Close">✕</button><div class="vslot" id="vslot"></div><button class="vsnd" id="vsnd" onclick="unmuteVid()">🔊 Tap for sound</button></div></div>
 <div id="toast"><span id="toastMsg"></span><button id="toastBtn" hidden>Undo</button></div>
 
 <script>
@@ -452,10 +453,24 @@ function showVid(u) {
     onerror="this.outerHTML='<iframe src=&quot;https://drive.google.com/file/d/${dr}/preview&quot; allow=&quot;autoplay; fullscreen&quot; allowfullscreen></iframe>'"></video>`;
   else if (/\.(mp4|mov|m4v|webm)(\?|#|$)/i.test(u)) html = `<video src="${esc(u)}" controls autoplay playsinline></video>`;
   else html = `<iframe src="${esc(u)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  $('vslot').style.aspectRatio = '16/9';
+  $('vsnd').style.display = 'none';
   $('vslot').innerHTML = html;
   $('vid').hidden = false;
+  startVid();
 }
-function closeVid() { $('vslot').innerHTML = ''; $('vid').hidden = true; }   // clearing the slot stops playback
+// iPhone blocks autoplay-with-sound here (it starts after the server check, not straight from the tap),
+// which left the video paused under iOS's gray play overlay. Start it muted if needed + offer a sound button.
+function startVid() {
+  const v = $('vslot').querySelector('video');
+  if (!v) return;
+  const fit = () => { if (v.videoWidth && v.videoHeight) $('vslot').style.aspectRatio = v.videoWidth + '/' + v.videoHeight; };
+  v.addEventListener('loadedmetadata', fit); fit();
+  const p = v.play();
+  if (p && p.catch) p.catch(() => { v.muted = true; $('vsnd').style.display = 'block'; v.play().catch(() => {}); });
+}
+function unmuteVid() { const v = $('vslot').querySelector('video'); if (v) { v.muted = false; v.play().catch(() => {}); } $('vsnd').style.display = 'none'; }
+function closeVid() { $('vslot').innerHTML = ''; $('vsnd').style.display = 'none'; $('vid').hidden = true; }   // clearing the slot stops playback
 
 $('pin').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
 if (pin) { $('login').style.display = 'none'; load(); }
