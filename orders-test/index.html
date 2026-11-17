@@ -354,11 +354,17 @@ const QUOTES = [
 ];
 const dayIdx = () => Math.floor((Date.now() - new Date().getTimezoneOffset() * 6e4) / 864e5);
 let quoteIdx = null;
+// Quotes come from the sheet (Secret tab, columns D/E) when there are any; built-in list otherwise
+let quoteSig = '';
 function showQuote(next) {
-  if (next) { let n; do n = Math.floor(Math.random() * QUOTES.length); while (n === quoteIdx); quoteIdx = n; }
-  else if (quoteIdx === null) quoteIdx = dayIdx() % QUOTES.length;
-  $('qt').textContent = '“' + QUOTES[quoteIdx][0] + '”';
-  $('qb').textContent = '— ' + QUOTES[quoteIdx][1];
+  const list = data && data.quotes && data.quotes.length ? data.quotes : QUOTES;
+  const sig = JSON.stringify(list);
+  if (sig !== quoteSig) { quoteSig = sig; quoteIdx = null; }          // Tim changed the list: start over
+  if (next && list.length > 1) { let n; do n = Math.floor(Math.random() * list.length); while (n === quoteIdx); quoteIdx = n; }
+  else if (quoteIdx === null) quoteIdx = dayIdx() % list.length;
+  const [text, by] = list[quoteIdx];
+  $('qt').textContent = '“' + text.replace(/^["“]|["”]$/g, '') + '”';
+  $('qb').textContent = by ? '— ' + by : '';
 }
 
 function renderMorale() {
