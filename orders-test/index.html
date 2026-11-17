@@ -70,6 +70,10 @@ main{padding:12px 12px calc(env(safe-area-inset-bottom) + 30px);max-width:640px;
 .card.newhead{background:#e8f1ff;border-color:#8fb4f2}
 .newtag{display:inline-block;background:#2563eb;color:#fff;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 6px;margin-right:6px;vertical-align:2px}
 .card.newhead .seg{background:#d6e5fc}
+/* Performance builds = HEADS cell highlighted yellow on the sheet (wins over the blue) */
+.card.perf{background:#fff7d1;border:2px solid #f2c200;box-shadow:0 0 0 3px rgba(242,194,0,.25)}
+.card.perf .seg{background:#fbe9a6}
+.perftag{display:inline-block;background:#f2c200;color:#3a2a00;border-radius:6px;font-size:11px;font-weight:800;letter-spacing:.05em;padding:1px 6px;margin-right:6px;vertical-align:2px}
 
 /* Morale tab */
 .tab.morale{background:#3a2a10;color:#ffcf7a}.tab.morale.on{background:#ffcf7a;color:#3a2a10}
@@ -168,6 +172,13 @@ const key = s => String(s ?? '').trim().toUpperCase();
 const known = s => STATUSES.find(x => key(x) === key(s));   // "build" → "Build"
 // New heads = the word "new" in the HEADS column (carburetors excluded)
 const isNewHead = s => /\bnew\b/i.test(s) && !/carb/i.test(s);
+// Performance = HEADS cell filled yellow on the sheet (any yellow-ish fill: high red + green, low blue)
+const isPerf = o => {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec((o.bg || [])[C.heads] || '');
+  if (!m) return false;
+  const [r, g, b] = m.slice(1).map(h => parseInt(h, 16));
+  return r > 200 && g > 170 && b < 140;
+};
 
 function toast(msg, undo, ms = 3000) {
   $('toastMsg').textContent = msg;
@@ -259,11 +270,11 @@ function render() {
     const c = o.cells, cur = known(c[C.status]), a = age(c[C.date]);
     const info = (i, label) => clean(c[i]) ? `<div class="info"><span>${esc(label)}</span>${esc(clean(c[i]))}</div>` : '';
     const extra = h.map((name, i) => i > C.builder && name.trim() ? info(i, name) : '').join('');
-    const nh = isNewHead(c[C.heads]);
-    return `<div class="card ${nh ? 'newhead' : ''}" id="r${o.row}" style="--sc:var(--${cur || (c[C.status].trim() ? 'other' : 'none')})">
+    const nh = isNewHead(c[C.heads]), pf = isPerf(o);
+    return `<div class="card ${nh ? 'newhead' : ''} ${pf ? 'perf' : ''}" id="r${o.row}" style="--sc:var(--${cur || (c[C.status].trim() ? 'other' : 'none')})">
       <div class="meta"><span class="num">${esc(c[C.order] ? '#' + c[C.order] : 'No #')}</span><span class="cust">${esc(c[C.customer])}</span>
         <span class="age ${parseInt(a) >= 10 ? 'old' : ''}">${esc(c[C.date])}${a ? ' · ' + a : ''}</span></div>
-      <div class="heads">${nh ? '<span class="newtag">NEW</span>' : ''}${c[C.qty] ? `<span class="qty">${esc(c[C.qty])}×</span>` : ''}${esc(clean(c[C.heads]))}</div>
+      <div class="heads">${pf ? '<span class="perftag">⚡ PERFORMANCE</span>' : ''}${nh ? '<span class="newtag">NEW</span>' : ''}${c[C.qty] ? `<span class="qty">${esc(c[C.qty])}×</span>` : ''}${esc(clean(c[C.heads]))}</div>
       ${info(C.shipBy, 'Ship by')}${info(C.notes, 'Notes')}${info(C.addl, 'More')}${info(C.builder, 'Builder')}${extra}
       ${c[C.status].trim() && !cur ? `<div class="sheetsays">Sheet says <b>${esc(c[C.status])}</b></div>` : ''}
       <div class="seg">${STATUSES.map(s => `<button class="${s === cur ? 'on' : ''}" style="--c:var(--${s})" onclick="setStatus(${o.row},'${s}')">${s}</button>`).join('')}</div>
