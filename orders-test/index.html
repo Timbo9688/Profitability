@@ -390,11 +390,37 @@ function renderSecret() {
     });
     $('smsg').textContent = '';
   }
-  const bg = (s.background || '').trim(), box = $('secret');
-  if (/^https?:\/\//i.test(bg)) {
-    const id = driveId(bg), src = id ? 'https://lh3.googleusercontent.com/d/' + id : bg;
-    box.style.backgroundColor = '#171c22'; box.style.backgroundImage = `url("${src.replace(/"/g, '%22')}")`;
-  } else { box.style.backgroundImage = 'none'; box.style.backgroundColor = bg || '#171c22'; }
+  setSecretBg((s.background || '').trim());
+}
+
+// Background: a color, a normal image link, or a Drive share link (any image type, SVG included).
+// Drive serves files as generic downloads, so we fetch the file and label it with its real image type.
+let bgFor = null;
+async function setSecretBg(bg) {
+  if (bg === bgFor) return;                       // unchanged since last refresh — don't refetch
+  bgFor = bg;
+  const box = $('secret');
+  const apply = src => { if (bgFor === bg) { box.style.backgroundColor = '#171c22'; box.style.backgroundImage = `url("${src.replace(/"/g, '%22')}")`; } };
+  if (!/^https?:\/\//i.test(bg)) { box.style.backgroundImage = 'none'; box.style.backgroundColor = bg || '#171c22'; return; }
+  const id = driveId(bg);
+  if (!id) return apply(bg);
+  try {
+    const res = await fetch('https://drive.usercontent.google.com/download?id=' + id + '&export=view');
+    if (!res.ok) throw new Error(res.status);
+    const buf = await res.arrayBuffer(), head = new Uint8Array(buf.slice(0, 512));
+    const txt = new TextDecoder().decode(head).trimStart();
+    const type = /^(<\?xml[\s\S]*)?<svg|<svg/i.test(txt) ? 'image/svg+xml'
+      : head[0] === 0x89 && head[1] === 0x50 ? 'image/png'
+      : head[0] === 0xff && head[1] === 0xd8 ? 'image/jpeg'
+      : txt.startsWith('GIF8') ? 'image/gif'
+      : txt.slice(8, 12) === 'WEBP' ? 'image/webp' : '';
+    if (!type) throw new Error('not an image');
+    if (box.dataset.blob) URL.revokeObjectURL(box.dataset.blob);
+    box.dataset.blob = URL.createObjectURL(new Blob([buf], { type }));
+    apply(box.dataset.blob);
+  } catch (e) {
+    apply('https://lh3.googleusercontent.com/d/' + id);   // fallback: Google's image link (works for png/jpg)
+  }
 }
 
 async function trySecret() {
@@ -421,7 +447,9 @@ function showVid(u) {
   const dr = driveId(u);
   let html;
   if (yt) html = `<iframe src="https://www.youtube.com/embed/${yt}?autoplay=1&playsinline=1&rel=0" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>`;
-  else if (dr) html = `<iframe src="https://drive.google.com/file/d/${dr}/preview" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
+  // Drive video: play the file directly (no Drive player overlay); if Drive won't stream it, fall back to Drive's player
+  else if (dr) html = `<video src="https://drive.usercontent.google.com/download?id=${dr}&export=download" controls autoplay playsinline
+    onerror="this.outerHTML='<iframe src=&quot;https://drive.google.com/file/d/${dr}/preview&quot; allow=&quot;autoplay; fullscreen&quot; allowfullscreen></iframe>'"></video>`;
   else if (/\.(mp4|mov|m4v|webm)(\?|#|$)/i.test(u)) html = `<video src="${esc(u)}" controls autoplay playsinline></video>`;
   else html = `<iframe src="${esc(u)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`;
   $('vslot').innerHTML = html;
