@@ -157,7 +157,7 @@ const API = 'https://script.google.com/macros/s/AKfycbxZS62ZMj-SJhzvtag7cqMEXOs5
 // Column positions in the Orders tab (A=0)
 const C = { date: 0, customer: 1, order: 2, qty: 3, heads: 4, status: 5, notes: 6, shipBy: 7, addl: 8, builder: 9 };
 let STATUSES = ['Teardown', 'Build', 'Done'];
-let data = null, filter = localStorage.hdpcTab || 'Active', pin = localStorage.hdpcPin || '', busy = false, saving = 0;
+let data = null, filter = localStorage.hdpcTab || 'All', pin = localStorage.hdpcPin || '', busy = false, saving = 0;
 let boardOpen = null;
 
 const $ = id => document.getElementById(id);
@@ -213,14 +213,16 @@ function group(o) {
   if (known(s)) return known(s);
   return key(s) === 'SHIPPED' ? 'Shipped' : 'Other';
 }
+// Tabs: New Heads and All. Shipped orders are hidden everywhere ("All" = everything not shipped).
+function inTab(o, t) {
+  if (group(o) === 'Shipped') return false;
+  return t === 'All' || isNewHead(o.cells[C.heads]);
+}
 function tabs() {
-  const n = t => data.orders.filter(o => t === 'All' || (t === 'Active' ? group(o) !== 'Shipped' : t === 'New Heads' ? group(o) !== 'Shipped' && isNewHead(o.cells[C.heads]) : group(o) === t)).length;
-  return ['Active', 'New Heads', ...STATUSES, 'Other', 'Shipped', 'All'].map(t => [t, n(t)]).filter(([t, c]) => c || ['Active', 'New Heads', ...STATUSES].includes(t));
+  return ['New Heads', 'All'].map(t => [t, data.orders.filter(o => inTab(o, t)).length]);
 }
 function matches(o) {
-  if (['Active', 'New Heads'].includes(filter) && group(o) === 'Shipped') return false;
-  if (filter === 'New Heads' && !isNewHead(o.cells[C.heads])) return false;
-  if (!['Active', 'New Heads', 'All'].includes(filter) && group(o) !== filter) return false;
+  if (!inTab(o, filter)) return false;
   const q = $('q').value.trim().toLowerCase();
   return !q || o.cells.join(' ').toLowerCase().includes(q);
 }
@@ -234,7 +236,7 @@ function age(d) {
 function render() {
   if (!data) return;
   const tb = tabs();
-  if (filter === 'Secret' ? !data.secret : filter !== 'Morale' && !tb.some(([t]) => t === filter)) filter = 'Active';
+  if (filter === 'Secret' ? !data.secret : filter !== 'Morale' && !tb.some(([t]) => t === filter)) filter = 'All';
   $('tabs').innerHTML = tb.map(([t, c]) =>
     `<button class="tab ${t === filter ? 'on' : ''}" style="--tc:var(--${STATUSES.includes(t) ? t : t === 'New Heads' ? 'NewHeads' : 'red'})" data-t="${esc(t)}">${esc(t)}<b>${c}</b></button>`).join('')
     + `<button class="tab morale ${filter === 'Morale' ? 'on' : ''}" data-t="Morale">💪 Morale</button>`
