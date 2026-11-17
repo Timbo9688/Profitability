@@ -467,7 +467,7 @@ function startVid() {
   const fit = () => { if (v.videoWidth && v.videoHeight) $('vslot').style.aspectRatio = v.videoWidth + '/' + v.videoHeight; };
   v.addEventListener('loadedmetadata', fit); fit();
   const p = v.play();
-  if (p && p.catch) p.catch(() => { v.muted = true; $('vsnd').style.display = 'block'; v.play().catch(() => {}); });
+  if (p && p.catch) p.catch(e => { if (e && e.name === 'NotAllowedError') { v.muted = true; $('vsnd').style.display = 'block'; v.play().catch(() => {}); } });
 }
 function unmuteVid() { const v = $('vslot').querySelector('video'); if (v) { v.muted = false; v.play().catch(() => {}); } $('vsnd').style.display = 'none'; }
 function closeVid() { $('vslot').innerHTML = ''; $('vsnd').style.display = 'none'; $('vid').hidden = true; }   // clearing the slot stops playback
